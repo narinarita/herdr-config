@@ -5,7 +5,7 @@ src=$(cd "$(dirname "$0")" && pwd)
 dst="${HERDR_HOME:-$HOME/.config/herdr-app}"
 backup="$dst/.backup-$(date +%Y%m%d-%H%M%S)"
 
-for path in layouts/my-main.json mods/space-tree mods/my-pane keys.json settings.json; do
+for path in layouts/my-main.json mods/space-tree mods/my-pane mods/claude-worktree keys.json settings.json; do
   if [ -e "$dst/$path" ]; then
     mkdir -p "$backup/$(dirname "$path")"
     cp -R "$dst/$path" "$backup/$path"
