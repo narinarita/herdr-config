@@ -6,21 +6,11 @@
 
 | ファイル | 内容 |
 | --- | --- |
-| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーに `space-tree`、右に Files / Changes パネルを置く |
-| `mods/space-tree/` | Spaces と Agents をひとつのツリーにまとめたサイドバー（標準の `spaces` mod 0.1.13 を複製して改造） |
+| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは Herdr の既定（Spaces と Agents のリスト）、右に Files / Changes パネルを置く |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く） |
 | `settings.json` | 外観とフォントの設定 |
-
-### space-tree でできること
-
-- 各 Space の下に、その Space で動いているエージェントをタブの順に並べる（サブエージェントはさらにその下）
-- Space の行の **+** から、その Space にエージェントやターミナルを起動する（1〜9 でエージェント、T でターミナル）
-- エージェントの行をドラッグして並べ替える（タブの順番が変わる）
-- Space の行の山形のボタンで、エージェントを折りたたむ（折りたたむと件数と一番急ぎの状態を表示）
-
-space-tree は、ワークツリーと git の状態を見るために `git` と `hc`（herdr-core）を実行します。ネットワークにはつながりません。
 
 ### claude-worktree でできること
 
