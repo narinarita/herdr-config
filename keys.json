@@ -16,6 +16,7 @@
     "cmd-shift-l": "layout.switch",
     "cmd-n": "space.new",
     "cmd-shift-n": "mod.open:claude-worktree",
+    "cmd-shift-t": "mod.open:tasks",
     "cmd-p": "mod.open:picker",
     "cmd-shift-p": "app.palette",
     "cmd-,": "app.settings",

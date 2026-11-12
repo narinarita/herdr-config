@@ -9,7 +9,8 @@
 | `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは Herdr の既定（Spaces と Agents のリスト）、右に Files / Changes パネルを置く |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
-| `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く） |
+| `mods/tasks/` | 自分の Jira の課題をカンバンで出し、ドラッグでステータスを変えるダイアログ（Command + Shift + T） |
+| `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree`、`cmd-shift-t` で `tasks` を開く） |
 | `settings.json` | 外観とフォントの設定 |
 
 ### claude-worktree でできること
@@ -49,6 +50,54 @@ Herdr 付属の New worktree との違いは、起点（付属は今の HEAD、�
 - 作業が終わった worktree は、サイドバーでその space のメニューから Remove worktree を選ぶと、space を閉じて worktree を消せる。ブランチは残るので、不要なら `git -C <メインのチェックアウト> branch -D <ブランチ名>` で消す
 
 claude-worktree は `git`（`fetch` を含むのでネットワークにつながります）を実行します。
+
+### tasks でできること
+
+Command + Shift + T で、自分の担当で今のスプリントの Jira の課題を、TODO / 進行中 / レビュー / 完了 の4列で表示します。もう一度押すか Esc で閉じます。
+
+- カードを別の列へドラッグすると、Jira の課題をその列のステータスへ遷移させる。ワークフローで行けない列は、ドラッグ中に薄く表示される
+- 遷移に「解決状況」が要るときは、選ぶ画面が出る。そのほかの必須項目が要る遷移は、Jira で操作する
+- 同じ列へ行く遷移が複数あるときは、どれを使うかを選ぶ
+- 失敗したら、カードを元の列に戻して理由を下に表示する
+- `r` か「↻ 更新」で読み直す
+
+worktree や agent とはつなげていません。できるのは課題を見ることと、ステータスを変えることだけです。
+
+#### 初回の設定
+
+1. `~/.config/herdr-jira.json` を作る。このリポジトリと `~/.config/herdr-app` の外に置くので、`install.sh` で消えず、GitHub にも上がらない
+
+   ```json
+   {
+     "site": "example.atlassian.net",
+     "email": "you@example.com"
+   }
+   ```
+
+2. Jira の API トークンを https://id.atlassian.com/manage-profile/security/api-tokens で作り、キーチェーンに入れる。`-w` のあとでトークンの入力を求められる
+
+   ```sh
+   security add-generic-password -s herdr-jira -a you@example.com -w
+   ```
+
+3. 通るかを確かめる。`accountId` などが返れば使える
+
+   ```sh
+   curl -s -u "you@example.com:$(security find-generic-password -s herdr-jira -a you@example.com -w)" \
+     https://example.atlassian.net/rest/api/3/myself
+   ```
+
+設定ファイルには、必要なら次も書けます。
+
+| 項目 | 既定 | 内容 |
+| --- | --- | --- |
+| `jql` | `assignee = currentUser() AND sprint in openSprints() ORDER BY rank` | ボードに出す課題 |
+| `columns` | なし | ステータス名と列の対応。例: `{ "検証中": "review" }`（値は `todo` / `doing` / `review` / `done`） |
+| `keychain` | `herdr-jira` | キーチェーンの項目の名前 |
+
+`columns` にないステータスは、名前に review か「レビュー」を含めばレビューの列へ、ほかは Jira のステータスのカテゴリー（To Do / 進行中 / 完了）で振り分けます。どれにも当てはまらない課題は、ボード上部の「列のないステータス」に並びます。
+
+tasks は `security`（キーチェーンからトークンを読む）を実行し、Jira（`https://<site>/rest/api/3/`）にネットワークでつながります。
 
 ## 入れ方
 
