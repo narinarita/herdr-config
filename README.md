@@ -6,7 +6,8 @@
 
 | ファイル | 内容 |
 | --- | --- |
-| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは Herdr の既定（Spaces と Agents のリスト）、右に Files / Changes パネルを置く |
+| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files / Changes パネルを置く |
+| `mods/branch-tree/` | サイドバー。リポジトリの Space の下に、本体のブランチ（main checkout）と worktree を並べ、その下にそれぞれの Agent をぶら下げる。git でない Space は Agent を直下に置く。下端に状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く） |
