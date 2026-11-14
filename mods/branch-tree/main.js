@@ -521,7 +521,10 @@ export default class SpaceTree extends View {
     const shown = ["blocked", "done", "working", "idle"].filter((s) => count[s] > 0 || s === "working" || s === "idle");
     return h_flex().h(34).flex_none().px(16).gap(12).items_center().border_t(1).border_color(t.border).text_size(11.5).text_color(t.dim)
       .children(shown.map((s) => h_flex().id(`sum-${s}`).gap(6).items_center()
-        .child(this.status(t, s))
+        // 0 件の Working は回さない（回っていると、動いている Agent がいるように見える）。
+        .child(s === "working" && count[s] === 0
+          ? svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.dim)
+          : this.status(t, s))
         .child(div().text_color(count[s] > 0 && s !== "idle" ? tone(t, s) : t.dim).child(`${label[s]} ${count[s]}`))));
   }
 
