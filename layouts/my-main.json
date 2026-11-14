@@ -33,18 +33,7 @@
               },
               "min": 90,
               "content": {
-                "mod": "spaces"
-              }
-            },
-            {
-              "id": "agents",
-              "type": "block",
-              "size": {
-                "weight": 1
-              },
-              "min": 90,
-              "content": {
-                "mod": "agents"
+                "mod": "branch-tree"
               }
             }
           ]
