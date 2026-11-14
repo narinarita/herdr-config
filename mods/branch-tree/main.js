@@ -1,8 +1,8 @@
 // Spaces, their branches and the agents in them, as one tree (from `space-tree`):
 //
 //   [H] herdr-config              1 agent
-//    ├ add-jira-tasks-mod  main checkout     <- the repo's own checkout, when it has worktrees
-//    └ design                                <- a worktree space
+//    ├ add-jira-tasks-mod                    <- the repo's own checkout (branch icon), when it has worktrees
+//    └ design                                <- a worktree space (folder icon)
 //       └ Herdr Appデザインの再現   14h ○     <- the agents in that branch
 //   [D] Desktop                   2 agents   <- not a repo: agents right under it
 //
@@ -473,8 +473,12 @@ export default class SpaceTree extends View {
   // A space and what hangs under it. A repo with worktrees gets a row for its own
   // checkout's branch, and its agents go under that row, like a worktree's.
   block(r, t) {
-    if (r.tree) return [this.row(r, t), ...this.agentRows(r.w, t, UNDER_BRANCH)];
-    if (r.kids) return [this.row(r, t), this.checkoutRow(r, t), ...this.agentRows(r.w, t, UNDER_BRANCH)];
+    const under = () => {
+      const rows = this.agentRows(r.w, t, UNDER_BRANCH);
+      return rows.length || foldedSpaces().has(r.w.id) ? rows : [this.noAgents(r.w, t)];
+    };
+    if (r.tree) return [...(r.header ? [this.repoRow(r.header, t)] : []), this.row(r, t), ...under()];
+    if (r.kids) return [this.row(r, t), this.checkoutRow(r, t), ...under()];
     return [this.row(r, t), ...this.agentRows(r.w, t)];
   }
 
@@ -488,8 +492,25 @@ export default class SpaceTree extends View {
       .child(div().flex_shrink(1).min_w(0).truncate().text_color(t.muted).child(g.branch ?? "detached"))
       .child(h_flex().flex_1().min_w(0).gap(5).justify_end().items_center().text_size(11).text_color(t.dim)
         .when(g.ahead > 0, (el) => el.child(div().flex_none().text_color(t.ansi2).child(`↑${g.ahead}`)))
-        .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`↓${g.behind}`)))
-        .child(div().flex_none().child("main checkout")));
+        .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`↓${g.behind}`))));
+  }
+
+  // A repo whose main checkout has no space: a heading over its worktrees, not a space itself.
+  repoRow({ name, repo, agents: count }, t) {
+    const colors = Object.values(MARK);
+    let hash = 0;
+    for (const ch of repo) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    return h_flex().id(`repo-${repo}`).h(30).px(8).flex_none().gap(9).items_center()
+      .child(h_flex().size(18).flex_none().rounded(5).bg(colors[hash % colors.length]).items_center().justify_center()
+        .text_size(10.5).font_bold().text_color("#ffffff").child([...name][0]?.toUpperCase() ?? "?"))
+      .child(div().flex_1().min_w(0).truncate().text_color(t.foreground).child(name))
+      .when(count > 0, (el) => el.child(div().flex_none().text_size(11.5).text_color(t.dim).child(plural(count))));
+  }
+
+  // Under a branch or worktree with no agents, so the empty branch doesn't look like a missing row.
+  noAgents(w, t) {
+    return div().id(`none-${w.id}`).h(26).flex_none().flex().items_center().pl(8 + 9 + UNDER_BRANCH + 15)
+      .text_size(11.5).text_color(t.dim).child("Agent なし");
   }
 
   // The bottom line: how many agents are in each state, the urgent ones first.
@@ -533,13 +554,24 @@ export default class SpaceTree extends View {
     const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));
     const mains = new Set(list.filter((r) => r.g && !r.g.linked).map((r) => r.g.repo));
     const nested = (r) => r.g?.linked && mains.has(r.g.repo);
+    // A worktree whose repo has no space of its own (its main checkout was closed).
+    const orphan = (r) => r.g?.linked && !mains.has(r.g.repo);
+    const agentsIn = (x) => (this.bySpace.get(x.w.id) ?? []).length;
     const out = [];
     const placed = new Set(); // repos whose worktrees are listed (under the first of its spaces)
     for (const r of list) {
       if (nested(r)) continue;
+      // Orphans of one repo go together, under a header row for the repo (drawn by block()).
+      if (orphan(r)) {
+        if (placed.has(r.g.repo)) continue;
+        placed.add(r.g.repo);
+        const kids = list.filter((k) => orphan(k) && k.g.repo === r.g.repo);
+        const header = { name: r.g.name, repo: r.g.repo, agents: kids.reduce((n, k) => n + agentsIn(k), 0) };
+        kids.forEach((k, n) => out.push({ ...k, tree: n === kids.length - 1 ? "└─" : "├─", kids: 0, agents: agentsIn(k), header: n === 0 ? header : null }));
+        continue;
+      }
       const kids = !r.g || r.g.linked || placed.has(r.g.repo) ? [] : list.filter((k) => nested(k) && k.g.repo === r.g.repo);
       // kids: how many worktrees hang under it; agents: its own and theirs, for the count on its row.
-      const agentsIn = (x) => (this.bySpace.get(x.w.id) ?? []).length;
       out.push({ ...r, tree: null, kids: kids.length, agents: agentsIn(r) + kids.reduce((n, k) => n + agentsIn(k), 0) });
       if (!kids.length) continue;
       placed.add(r.g.repo);
@@ -696,7 +728,8 @@ export default class SpaceTree extends View {
         h_flex()
           .gap(9)
           .items_center()
-          .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).text_color(t.dim)))
+          // A worktree is a folder of its own: drawn as one, so it reads apart from the repo's own branch.
+          .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/folder.svg").size(13).text_color(t.dim)))
           .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
           .child(div().flex_shrink(0).max_w(150).truncate().text_color(t.foreground).child(w.name))
           // With worktrees, its branch has its own row below; the space shows how many agents it holds.
