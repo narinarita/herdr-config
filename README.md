@@ -6,12 +6,23 @@
 
 | ファイル | 内容 |
 | --- | --- |
-| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files / Changes パネルを置く |
+| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files / Changes パネル、下のステータスバーの右端に `pomodoro` を置く |
 | `mods/branch-tree/` | サイドバー。リポジトリの下に、本体のブランチ（ブランチのアイコン）と worktree（フォルダーのアイコン）を並べ、その下にそれぞれの Agent をぶら下げる（いなければ「Agent なし」）。本体の Space を閉じていても、リポジトリ名の見出しの下に worktree をまとめる。git でない Space は Agent を直下に置く。下端に状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
+| `mods/pomodoro/` | ステータスバーのポモドーロタイマー。全 space で共通の 1 つ |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く） |
 | `settings.json` | 外観とフォントの設定 |
+
+### pomodoro でできること
+
+ステータスバーの右端に、輪・「集中」か「休憩」・残り時間を出します。タイマーは全 space で共通の 1 つで、Herdr を閉じても状態が残ります。
+
+- 表示をクリックすると小さな窓が開き、開始（再開）・一時停止・次へ・リセットができる。Esc か窓の外のクリックで閉じる
+- 集中 25 分、休憩 5 分。4 回目の集中のあとは 15 分の休憩
+- 集中が終わると休憩がすぐ始まる。休憩が終わると次の集中は止めたまま待つ
+- 切り替わるときに通知を出し、macOS の Glass の音を鳴らす（`settings.json` の `sounds.enabled` が `false` なら鳴らさない）
+- Herdr を閉じている間に時間が過ぎていた回は、知らせずに次へ進める
 
 ### claude-worktree でできること
 

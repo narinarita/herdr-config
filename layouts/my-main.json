@@ -147,13 +147,30 @@
         },
         {
           "id": "status",
-          "type": "block",
-          "content": {
-            "mod": "workspace-status"
-          },
+          "type": "row",
           "size": {
             "px": 28
-          }
+          },
+          "resizable": false,
+          "children": [
+            {
+              "id": "status-main",
+              "type": "block",
+              "content": {
+                "mod": "workspace-status"
+              }
+            },
+            {
+              "id": "pomodoro",
+              "type": "block",
+              "size": {
+                "px": 112
+              },
+              "content": {
+                "mod": "pomodoro"
+              }
+            }
+          ]
         }
       ],
       "resizable": false
