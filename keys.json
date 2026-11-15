@@ -60,6 +60,9 @@
     "ctrl-8": "space.select:8",
     "ctrl-9": "space.select:9"
   },
+  "mod:editor": {
+    "cmd-s": "editor.save"
+  },
   "terminal": {
     "cmd-f": "terminal.search",
     "cmd-c": "terminal.copy",
