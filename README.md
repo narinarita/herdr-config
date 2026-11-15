@@ -6,13 +6,44 @@
 
 | ファイル | 内容 |
 | --- | --- |
-| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files / Changes パネル、下のステータスバーの右端に `pomodoro` を置く |
+| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files（`my-files`）/ Changes パネル、下のステータスバーの右端に `pomodoro` を置く |
 | `mods/branch-tree/` | サイドバー。リポジトリの下に、本体のブランチ（ブランチのアイコン）と worktree（フォルダーのアイコン）を並べ、その下にそれぞれの Agent をぶら下げる（いなければ「Agent なし」）。本体の Space を閉じていても、リポジトリ名の見出しの下に worktree をまとめる。git でない Space は Agent を直下に置く。下端に状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
+| `mods/editor/` | ファイルを Herdr の中のペインで開いて編集するエディタ。保存は Command + S |
+| `mods/my-files/` | Files パネル（標準の `files` mod 0.1.15 の複製）。ファイルをクリックすると `editor` で開く |
+| `shell/e.zsh` | シェルの `e <ファイル>` で `editor` を開く関数。`~/.zshrc` で `source` する |
 | `mods/pomodoro/` | ステータスバーのポモドーロタイマー。全 space で共通の 1 つ |
-| `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く） |
+| `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く。`editor` の中では `cmd-s` で保存） |
 | `settings.json` | 外観とフォントの設定 |
+
+### editor でできること
+
+ファイルを Xcode などの外部アプリで開かずに、Herdr の中のペインで編集します。
+
+- 開き方は2つ。右の Files パネルでファイルをクリックするか、Herdr のターミナルで `e <ファイル>` を実行する
+- 同じタブにエディタのペインがあればそこで差し替え、なければ今のペインの右に分割して開く。1つのペインに開くのは1つのファイル
+- Command + S で保存する。保存していない変更があると、ヘッダーのファイル名の横に点が付く
+- 保存していない変更があるまま別のファイルを開くと、保存して開くか、破棄して開くかを聞く
+- Claude などがファイルを書き換えると、保存していない変更がなければそのまま読み直す。あれば、読み直すか手元の変更を残すかを聞く
+- 開いたあとにファイルが変わっていたら、保存しても上書きせずに確認を出す
+- Markdown はヘッダーの鉛筆と目のアイコンで、編集とプレビューを切り替える
+- 別のマシンの space のファイルは読み取り専用で開き、10 秒ごとに読み直す
+- 1 MB を超えるファイルと、テキストでないファイルは開かずに理由だけ出す
+
+LSP、補完、検索、1つのペインの中のタブは入れていません。
+
+`e` を使うには、`~/.zshrc` に次を足します。
+
+```sh
+source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
+```
+
+注意点:
+
+- ペインのヘッダーの × で閉じると、保存していない変更は消える（閉じる前に止める手段が Herdr にない）
+- ターミナルに出たパスを Command + クリックしたときは、今までどおり macOS の既定のアプリで開く
+- エディタは `shared("editor.panes")` にペインの対応を、`shared("editor.request")` に差し替えの依頼を置く
 
 ### pomodoro でできること
 
