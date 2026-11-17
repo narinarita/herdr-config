@@ -7,7 +7,7 @@
 | ファイル | 内容 |
 | --- | --- |
 | `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files（`my-files`）/ Changes / Timeline（`timeline`）パネル、上のタブの帯は `my-tabs`、下のステータスバーの右端に `pomodoro` を置く |
-| `mods/branch-tree/` | サイドバー。リポジトリの下に、本体のブランチ（ブランチのアイコン）と worktree（フォルダーのアイコン）を並べ、その下にそれぞれの Agent をぶら下げる（いなければ「Agent なし」）。本体の Space を閉じていても、リポジトリ名の見出しの下に worktree をまとめる。git でない Space は Agent を直下に置く。下端に状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
+| `mods/branch-tree/` | サイドバー。リポジトリの下に、本体のブランチ（ブランチのアイコン）と worktree（フォルダーのアイコン）を並べ、その下にそれぞれの Agent をぶら下げる（いなければ「Agent なし」）。本体の Space を閉じていても、リポジトリ名の見出しの下に worktree をまとめる。git でない Space は Agent を直下に置く。下端に Claude Code の使用量（5 時間枠と週の上限）のバーと、状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
 | `mods/editor/` | ファイルを Herdr の中のペインで開いて編集するエディタ。保存は Command + S |
@@ -17,6 +17,7 @@
 | `mods/my-tabs/` | タブの帯（標準の `tabs` mod 0.1.16 の複製）。右上の Files / Changes の横に Timeline の切り替えを足す |
 | `mods/timeline/` | 右パネルの Timeline。フォーカスしているターミナルの Claude の目標と作業ツリーを出す |
 | `hooks/timeline.sh` | 作業ツリーを書く Claude Code の hook（Stop / UserPromptSubmit / SessionStart）。`install.sh` が `~/.claude/hooks/herdr-timeline.sh` に置き、`~/.claude/settings.json` に登録する |
+| `hooks/usage.sh` | Claude Code の使用量を書き出す statusline 用のスクリプト。`install.sh` が `~/.claude/hooks/herdr-usage.sh` に置き、`~/.claude/settings.json` の今の statusline の前に挟む |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く。`editor` の中では `cmd-s` で保存） |
 | `settings.json` | 外観とフォントの設定 |
 
@@ -76,6 +77,26 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 - ツリーは Haiku の解釈なので、項目の切り方や状態が実際とずれることがある
 - 別のマシンの Space のターミナルの作業ツリーは出せない
 - 登録前から動いている Claude のセッションでは更新されないことがある。そのときは Claude を起動し直す
+
+### サイドバーの使用量
+
+左のサイドバーの下端（状態ごとの Agent 数の上）に、Claude Code の使用量を 2 本の細いバーで出します。
+
+- 左に「h」（5 時間枠）と「w」（週の上限）、その下にリセットの時刻（`1:10 (水)`）。右にバーと使った割合（%）
+- 80% から黄、100% で赤。上限に達した枠は、リセットの時刻も赤にする
+- マウスを乗せると、リセットまでの残り時間が出る
+- サイドバーを細くした（rail の）ときは出さない
+
+値の取り方:
+
+- Claude Code が statusline に渡す JSON の `rate_limits` を、`hooks/usage.sh` が `~/.local/state/herdr-usage/limits.json` に書く。値が変わったときだけ書く。サイドバーはそれを読むだけ
+- `install.sh` は `~/.claude/settings.json` の `statusLine.command` の前に `~/.claude/hooks/herdr-usage.sh tee |` を足す。statusline を使っていなければ、何も出さない `herdr-usage.sh` だけを登録する
+- 使用量はアカウントごとなので、Herdr の外の Claude からも書く
+
+注意点:
+
+- statusline は Claude Code が動いている間しか呼ばれない。Claude を使っていない間は、最後に取った値のまま。リセット時刻を過ぎた値は 0% として出す
+- 一度も値を取れていないうちは、バーを出さない
 
 ### pomodoro でできること
 

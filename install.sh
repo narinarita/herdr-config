@@ -29,6 +29,9 @@ claude_dir="$HOME/.claude"
 mkdir -p "$claude_dir/hooks"
 cp "$src/hooks/timeline.sh" "$claude_dir/hooks/herdr-timeline.sh"
 chmod +x "$claude_dir/hooks/herdr-timeline.sh"
+# サイドバーの使用量: statusline に渡る JSON から rate_limits を書き出す。
+cp "$src/hooks/usage.sh" "$claude_dir/hooks/herdr-usage.sh"
+chmod +x "$claude_dir/hooks/herdr-usage.sh"
 if command -v jq >/dev/null 2>&1; then
   settings="$claude_dir/settings.json"
   [ -f "$settings" ] || echo '{}' >"$settings"
@@ -45,11 +48,16 @@ if command -v jq >/dev/null 2>&1; then
     | add("Stop"; "stop")
     | add("SessionStart"; "start")
     | add("UserPromptSubmit"; "prompt")
-  ' "$settings" >"$settings.tmp" || { rm -f "$settings.tmp"; echo "Could not read $settings as JSON: the timeline hooks were not registered" >&2; exit 1; }
+    # 使用量: 今の statusline の前に herdr-usage.sh を挟む（statusline がなければ、何も出さない herdr-usage.sh だけにする）。
+    | "~/.claude/hooks/herdr-usage.sh" as $usage
+    | if ((.statusLine.command // "") | contains($usage)) then .
+      elif (.statusLine.command // "") != "" then .statusLine.command = ($usage + " tee | " + .statusLine.command)
+      else .statusLine = {type: "command", command: $usage} end
+  ' "$settings" >"$settings.tmp" || { rm -f "$settings.tmp"; echo "Could not read $settings as JSON: the timeline hooks and the usage statusline were not registered" >&2; exit 1; }
   jq -S . "$settings" >"$settings.a" && jq -S . "$settings.tmp" >"$settings.b"
   if cmp -s "$settings.a" "$settings.b"; then
     rm -f "$settings.tmp" "$settings.a" "$settings.b"
-    echo "The timeline hooks are already registered in $settings"
+    echo "The timeline hooks and the usage statusline are already registered in $settings"
   else
     rm -f "$settings.a" "$settings.b"
     # 書き換えるときだけ、日時付きで元を残す。
@@ -57,10 +65,10 @@ if command -v jq >/dev/null 2>&1; then
     cp "$settings" "$saved"
     # mv ではなく中身を書き込む（settings.json が dotfiles のシンボリックリンクでも、リンクのまま残るように）。
     cat "$settings.tmp" >"$settings" && rm -f "$settings.tmp"
-    echo "Registered the timeline hooks in $settings (previous copy: $saved)"
+    echo "Registered the timeline hooks and the usage statusline in $settings (previous copy: $saved)"
   fi
 else
-  echo "jq is not installed: the timeline hooks were not registered" >&2
+  echo "jq is not installed: the timeline hooks and the usage statusline were not registered" >&2
 fi
 # 前の版（出来事の並び）が書いた記録は使わないので消す。
 find "$HOME/.local/state/herdr-timeline" \( -name '*.jsonl' -o -name '*.todos.json' \) -delete 2>/dev/null || true
