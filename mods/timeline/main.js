@@ -12,6 +12,12 @@
 //      ● hooks/timeline.sh を書き直す
 //      ◐ 実際のやりとりで動作を確かめる          <- 進めている作業は背景を付ける
 //   ○ timeline mod を作り直す
+//   ── これまでの目標 2 ─────────────────────
+//   › ● Usage をサイドバーに出す     13/13 · 1 時間 31 分   <- 畳んだ前の目標。押すと開く
+//   › ◐ 別の作業                       3/5 · 12 分        <- 途中で別の目標に移ったもの
+//
+// 目標が 100% になったら、その目標を畳んで「これまでの目標」の先頭に出し、上には「次の作業を頼むと…」だけを出す。
+// 別の目標に移ると、hook が前の目標を plan.json の past に移す（終わっていても途中でも）。新しい目標は畳んだ目標の上に出る。
 //
 // ツリーを書くのは hooks/timeline.sh（Claude Code の hook）。指示を送った時点（UserPromptSubmit）で目標と状態を直し、
 // 返答が終わるたび（Stop）に作業を分けて状態を更新する。どちらも Haiku が行う。
@@ -44,7 +50,10 @@ function parse(text) {
     state: STATES.has(x?.state) ? x.state : "todo",
     children: Array.isArray(x?.children) ? x.children.map(item) : [],
   });
-  return { goal: String(p.goal ?? ""), started: Number(p.started) || null, updated: Number(p.updated) || null, items: p.items.map(item) };
+  const past = (Array.isArray(p.past) ? p.past : []).filter((g) => g && Array.isArray(g.items)).map((g) => ({
+    goal: String(g.goal ?? ""), started: Number(g.started) || null, ended: Number(g.ended) || null, items: g.items.map(item),
+  }));
+  return { goal: String(p.goal ?? ""), started: Number(p.started) || null, updated: Number(p.updated) || null, items: p.items.map(item), past };
 }
 
 // 子を持つ項目の状態は子から決める。返事待ちの子があれば返事待ち、次に進めている子があれば進行中。
@@ -55,15 +64,17 @@ function stateOf(it) {
     : s.some((x) => x !== "todo") ? "doing" : "todo";
 }
 const leaves = (items) => items.flatMap((it) => it.children.length ? leaves(it.children) : [it]);
+const complete = (items) => { const all = leaves(items); return all.length > 0 && all.every((x) => x.state === "done"); };
 
-function minutes(from) {
-  const m = Math.max(0, Math.floor((Date.now() / 1000 - from) / 60));
+function minutes(from, to = Date.now() / 1000) {
+  const m = Math.max(0, Math.floor((to - from) / 60));
   return m < 60 ? `${m} 分` : `${Math.floor(m / 60)} 時間 ${m % 60} 分`;
 }
 
 export default class Timeline extends View {
   init(_props, cx) {
     this.key = null; this.plan = null; this.pendingAt = null; this.loaded = false; this.seq = 0;
+    this.open = new Set(); // 開いている「これまでの目標」（started と goal で見分ける）
     if (checking()) return;
     this.watch(cx);
     // 経過時間を進める時計。見張りが止まっていたら（フォルダーがまだない等）ここで読み直し、見張り直す。
@@ -133,14 +144,48 @@ export default class Timeline extends View {
     // hook 側はロック待ちが最大 3 分、Haiku の打ち切りが 2 分。
     this.pending = Boolean(this.pendingAt) && Date.now() - this.pendingAt < 300000;
     root.child(this.header(t, title, status, space?.name, pane?.branch));
-    if (!this.plan?.items.length) {
+    // 100% になった目標は、上には出さず「これまでの目標」の先頭に畳んで出す。
+    const plan = this.plan;
+    const finished = Boolean(plan?.items.length) && complete(plan.items);
+    const active = Boolean(plan?.items.length) && !finished;
+    const past = !plan ? [] : [
+      ...(finished ? [{ goal: plan.goal, started: plan.started, ended: plan.updated, items: plan.items }] : []),
+      ...plan.past,
+    ];
+    if (!active && !past.length) {
       return root.child(this.empty(t, !this.loaded ? "読み込み中…" : this.pending
         ? "作業ツリーを作っています…"
         : "作業ツリーはまだありません。Claude に作業を頼むと、ここにできます"));
     }
     return root.child(v_flex().id("plan").flex_1().min_h(0).px(12).pt(12).pb(14).gap(10).overflow_y_scrollbar()
-      .child(this.goal(t, status))
-      .child(v_flex().gap(1).children(this.plan.items.flatMap((it) => this.rows(t, it, 0)))));
+      .when(active, (el) => el.child(this.goal(t, status))
+        .child(v_flex().gap(1).children(plan.items.flatMap((it) => this.rows(t, it, 0)))))
+      .when(!active, (el) => el.child(div().px(12).py(14).rounded(8).border_1().border_color(t.border)
+        .whitespace_normal().text_center().text_size(12.5).text_color(t.dim)
+        .child(this.pending ? "作業ツリーを作っています…" : "次の作業を頼むと、ここに出ます")))
+      .when(past.length > 0, (el) => el.child(this.pastView(t, past))));
+  }
+
+  // これまでの目標。1 行に畳み、押すと開いて子の項目を出す。
+  pastView(t, past) {
+    return v_flex().gap(2).pt(4)
+      .child(h_flex().gap(8).items_center().pb(2).text_size(11).text_color(t.dim)
+        .child(div().flex_none().child(`これまでの目標 ${past.length}`))
+        .child(div().flex_1().h(1).bg(t.border)))
+      .children(past.flatMap((g, i) => {
+        const key = `${g.started}:${g.goal}`, open = this.open.has(key);
+        const all = leaves(g.items), done = all.filter((x) => x.state === "done").length;
+        const ok = all.length > 0 && done === all.length;
+        const span = g.started && g.ended ? ` · ${minutes(g.started, g.ended)}` : "";
+        const row = h_flex().id(`past-${i}`).gap(7).items_center().py(4).px(6).rounded(6).cursor_pointer()
+          .hover((s) => s.bg(t.raised))
+          .on_click((_e, cx) => { if (open) this.open.delete(key); else this.open.add(key); cx.notify(); })
+          .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(10).flex_none().text_color(t.dim))
+          .child(div().w(12).flex_none().text_size(11).text_color(ok ? t.done : t.muted).child(ok ? ICON.done : ICON.doing))
+          .child(div().flex_1().min_w(0).truncate().text_color(t.muted).child(g.goal || "（目標なし）"))
+          .child(div().flex_none().text_size(11).text_color(t.dim).child(`${done}/${all.length}${span}`));
+        return [row, ...(open ? g.items.flatMap((it) => this.rows(t, it, 1, true)) : [])];
+      }));
   }
 
   empty(t, text) {
@@ -183,17 +228,19 @@ export default class Timeline extends View {
         .child(`${pct.toFixed(1)}%`));
   }
 
-  rows(t, it, depth) {
+  // quiet: 畳んだ目標を開いたときの項目。背景・太字・「返事待ち」を付けず、薄く出す。
+  rows(t, it, depth, quiet = false) {
     const s = stateOf(it), leaf = !it.children.length;
     const color = { done: t.done, doing: t.working, waiting: t.blocked, todo: t.dim }[s];
+    const strong = !quiet && (!leaf || s === "doing" || s === "waiting");
     const row = h_flex().gap(8).items_start().py(3).pr(6).pl(6 + depth * 18).rounded(5)
-      .when(leaf && (s === "doing" || s === "waiting"), (el) => el.bg(t.raised))
+      .when(!quiet && leaf && (s === "doing" || s === "waiting"), (el) => el.bg(t.raised))
       .child(div().w(12).flex_none().text_size(11).text_color(color).child(ICON[s]))
       .child(div().flex_1().min_w(0).whitespace_normal()
-        .text_color(s === "done" ? t.muted : t.foreground)
-        .when(!leaf || s === "doing" || s === "waiting", (el) => el.font_weight(500))
+        .text_color(quiet ? t.dim : s === "done" ? t.muted : t.foreground)
+        .when(strong, (el) => el.font_weight(500))
         .child(it.title))
-      .when(s === "waiting", (el) => el.child(div().flex_none().text_size(11).text_color(t.blocked).child("返事待ち")));
-    return [row, ...it.children.flatMap((c) => this.rows(t, c, depth + 1))];
+      .when(!quiet && s === "waiting", (el) => el.child(div().flex_none().text_size(11).text_color(t.blocked).child("返事待ち")));
+    return [row, ...it.children.flatMap((c) => this.rows(t, c, depth + 1, quiet))];
   }
 }

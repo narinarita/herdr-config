@@ -11,7 +11,10 @@
 #
 # 書き先: ~/.local/state/herdr-timeline/<terminal>.plan.json
 #   {"goal": "...", "started": 秒, "updated": 秒, "turn": ミリ秒,
-#    "items": [{"title": "...", "state": "done|doing|waiting|todo", "children": [...]}]}
+#    "items": [{"title": "...", "state": "done|doing|waiting|todo", "children": [...]}],
+#    "past": [{"goal": "...", "started": 秒, "ended": 秒, "items": [...]}, ...]}
+# 別の目標に移るときは、前の目標を（終わっていても途中でも）past の先頭に移す。新しいものほど前、20 件まで。
+# past は Haiku には渡さない。新しいセッション（起動・/clear）で空にする。
 # 新しいセッションで空にしたときは "cleared" にその時刻を置き、それより前に始まった更新は書かない。
 # 更新中は <terminal>.plan.pending に、その更新の turn を置く（mod が「更新中…」を出す）。
 # 作業ツリーの各項目は状態だけを持つ（% は持たない）ので、作業の区切りごとの更新で十分。
@@ -140,12 +143,14 @@ update() {
   local turn="$1" turn_text="$2" prompt="$3" old out
   lock
   old=$(cat "$plan" 2>/dev/null || echo null)
+  jq -e . <<<"$old" >/dev/null 2>&1 || old=null
   # 待っている間に新しいセッションで空にされていたら、それより前のやりとりでは更新しない。
   # （ロックを取る順番は決まっていないので、ほかの更新との前後では捨てない）
   if [ "$(jq -r '.cleared // 0' <<<"$old" 2>/dev/null || echo 0)" -gt "$turn" ]; then
     unlock; [ "$(cat "$pending" 2>/dev/null)" = "$turn" ] && rm -f "$pending"; return
   fi
-  out=$(printf '今の作業ツリー:\n%s\n\n今回のやりとり:\n%s\n' "$old" "$turn_text" |
+  # これまでの目標 (past) は渡さない（今の目標の更新には要らず、入力が長くなるだけ）。
+  out=$(printf '今の作業ツリー:\n%s\n\n今回のやりとり:\n%s\n' "$(jq -c 'if type == "object" then del(.past) else . end' <<<"$old")" "$turn_text" |
     env -u HC_TERMINAL_ID HERDR_TIMELINE_SKIP=1 perl -e 'alarm shift; exec @ARGV' 120 claude -p --model haiku --tools "" --no-session-persistence \
       --setting-sources "" --strict-mcp-config --disable-slash-commands \
       --output-format json --json-schema "$SCHEMA" "$prompt" 2>/dev/null |
@@ -156,7 +161,11 @@ update() {
       {goal: $out.goal,
        started: (if $out.new_goal or (($old.items // []) | length) == 0 then $t else ($old.started // $t) end),
        updated: $t, turn: ([$turn, ($old.turn // 0)] | max), cleared: ($old.cleared // 0),
-       items: [ $out.items[] | {title, state} + (if (.children // []) | length > 0 then {children: [ .children[] | {title, state} ]} else {} end) ]}
+       items: [ $out.items[] | {title, state} + (if (.children // []) | length > 0 then {children: [ .children[] | {title, state} ]} else {} end) ],
+       # 別の目標に移るとき、前の目標を past の先頭に残す。
+       past: ((if $out.new_goal and (($old.items // []) | length) > 0
+               then [{goal: ($old.goal // ""), started: ($old.started // null), ended: $t, items: $old.items}] else [] end)
+              + ($old.past // []))[0:20]}
     ' >"$plan.tmp.$$" && mv "$plan.tmp.$$" "$plan"
   fi
   unlock
