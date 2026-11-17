@@ -6,7 +6,7 @@
 
 | ファイル | 内容 |
 | --- | --- |
-| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files（`my-files`）/ Changes パネル、下のステータスバーの右端に `pomodoro` を置く |
+| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files（`my-files`）/ Changes / Timeline（`timeline`）パネル、上のタブの帯は `my-tabs`、下のステータスバーの右端に `pomodoro` を置く |
 | `mods/branch-tree/` | サイドバー。リポジトリの下に、本体のブランチ（ブランチのアイコン）と worktree（フォルダーのアイコン）を並べ、その下にそれぞれの Agent をぶら下げる（いなければ「Agent なし」）。本体の Space を閉じていても、リポジトリ名の見出しの下に worktree をまとめる。git でない Space は Agent を直下に置く。下端に状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
@@ -14,6 +14,9 @@
 | `mods/my-files/` | Files パネル（標準の `files` mod 0.1.15 の複製）。ファイルをクリックすると `editor` で開く |
 | `shell/e.zsh` | シェルの `e <ファイル>` で `editor` を開く関数。`~/.zshrc` で `source` する |
 | `mods/pomodoro/` | ステータスバーのポモドーロタイマー。全 space で共通の 1 つ |
+| `mods/my-tabs/` | タブの帯（標準の `tabs` mod 0.1.16 の複製）。右上の Files / Changes の横に Timeline の切り替えを足す |
+| `mods/timeline/` | 右パネルの Timeline。フォーカスしているターミナルの Claude の目標と作業ツリーを出す |
+| `hooks/timeline.sh` | 作業ツリーを書く Claude Code の hook（Stop / UserPromptSubmit / SessionStart）。`install.sh` が `~/.claude/hooks/herdr-timeline.sh` に置き、`~/.claude/settings.json` に登録する |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く。`editor` の中では `cmd-s` で保存） |
 | `settings.json` | 外観とフォントの設定 |
 
@@ -44,6 +47,35 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 - ペインのヘッダーの × で閉じると、保存していない変更は消える（閉じる前に止める手段が Herdr にない）
 - ターミナルに出たパスを Command + クリックしたときは、今までどおり macOS の既定のアプリで開く
 - エディタは `shared("editor.panes")` にペインの対応を、`shared("editor.request")` に差し替えの依頼を置く
+
+### timeline でできること
+
+右上の Timeline を押すと、右パネルに、フォーカスしているターミナルで動いている Claude の作業を、目標と作業ツリーで出します。
+
+- 上に目標と全体の進み具合（終わった件数 / 全件数、始めてからの時間、%）
+- その下に作業ツリー。入れ子は2段まで。項目ごとに状態（● 終わった、◐ 進めている・返事待ち、○ まだ）だけを出し、進めている項目には背景を付ける
+- エディタなどターミナルでないペインに移っても、直前のターミナルの作業ツリーを出したままにする
+
+作業ツリーの作り方:
+
+- Claude が返答を終えるたびに、`hooks/timeline.sh`（Stop hook）が今回のやりとり（指示・返答・使った操作）と今のツリーを Haiku（`claude -p --model haiku`）に渡し、更新したツリーを書く。同じ目標の続きなら項目は変えずに状態だけ直し、別の目標なら作り直す。質問に答えただけのときは変えない
+- 指示を送った時点でも（UserPromptSubmit hook）、目標と項目の状態だけを直す。指示にあたる項目を ◐ にし、なければ1つ足し、別の目標なら目標を変える。作業を細かく分けるのは返答の終わりに任せる。質問や雑談、引数のないスラッシュコマンドでは変えない
+- 項目は状態だけを持つ（% を持たない）ので、作業の区切りごとの更新で、実際の作業とのずれが小さい
+- 更新は 2〜5 秒かかるので、バックグラウンドで動かし、その間はパネルに「更新中…」を出す
+- 新しいセッション（起動・`/clear`）では、前の作業のツリーを空にする。再開（resume）では残す
+- 長いやりとりは、指示と最後の部分を残して間を省いて渡す。スキルの展開や通知など、ユーザーが書いたのではないメッセージは指示と見なさない
+- 更新は 1 つずつ順番に行う。前の更新が書いたツリーを元に次の更新が作る
+- どの Space の Claude でも動くよう、hook はグローバルの `~/.claude/settings.json` に登録する。Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない
+- 書き先は `~/.local/state/herdr-timeline/<ターミナル ID>.plan.json`
+- 更新用の `claude -p` は hook を読まず（`--setting-sources ""`）、`HC_TERMINAL_ID` を外して動かすので、自分自身の返答でツリーを更新したり、再開用の記録を上書きしたりしない
+- 必要なもの: `jq`
+
+注意点:
+
+- 指示を送ったときと Claude が返答を終えたときに、Haiku を 1 回ずつ呼ぶので、そのぶん使用量が増える
+- ツリーは Haiku の解釈なので、項目の切り方や状態が実際とずれることがある
+- 別のマシンの Space のターミナルの作業ツリーは出せない
+- 登録前から動いている Claude のセッションでは更新されないことがある。そのときは Claude を起動し直す
 
 ### pomodoro でできること
 
