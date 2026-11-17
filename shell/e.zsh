@@ -15,9 +15,18 @@ e() {
     echo "e: ファイルがありません: $file" >&2
     return 1
   fi
-  # JSON の文字列に入れるため、\ と " をエスケープする
-  file=${file//\\/\\\\}
-  file=${file//\"/\\\"}
-  local id="e$(date +%s)$RANDOM"
-  herdr-app do pane.split "{\"direction\":\"right\",\"mod\":\"editor\",\"props\":{\"id\":\"$id\",\"file\":\"$file\",\"on\":null}}" >/dev/null
+  local id="e$(date +%s)$RANDOM" args
+  # JSON は jq で組み立てる（改行・タブ・制御文字を含むファイル名でも壊れないように）。
+  if command -v jq >/dev/null 2>&1; then
+    args=$(jq -cn --arg id "$id" --arg file "$file" '{direction: "right", mod: "editor", props: {id: $id, file: $file, on: null}}') || return 1
+  else
+    if [[ $file == *[[:cntrl:]]* ]]; then
+      echo "e: 制御文字を含むファイル名は jq がないと開けません" >&2
+      return 1
+    fi
+    local f=${file//\\/\\\\}
+    f=${f//\"/\\\"}
+    args="{\"direction\":\"right\",\"mod\":\"editor\",\"props\":{\"id\":\"$id\",\"file\":\"$f\",\"on\":null}}"
+  fi
+  herdr-app do pane.split "$args" >/dev/null
 }

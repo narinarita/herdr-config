@@ -8,7 +8,7 @@
 | --- | --- |
 | `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files（`my-files`）/ Changes / Timeline（`timeline`）パネル、上のタブの帯は `my-tabs`、下のステータスバーの右端に `pomodoro` を置く |
 | `mods/branch-tree/` | サイドバー。リポジトリの下に、本体のブランチ（ブランチのアイコン）と worktree（フォルダーのアイコン）を並べ、その下にそれぞれの Agent をぶら下げる（いなければ「Agent なし」）。本体の Space を閉じていても、リポジトリ名の見出しの下に worktree をまとめる。git でない Space は Agent を直下に置く。下端に Claude Code の使用量（5 時間枠と週の上限）のバーと、状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
-| `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
+| `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 を元にしたもの）。マウスを乗せると、Finder で選んだファイルをそのペインのターミナルに添付するボタン（`attach` mod）を出す。今の標準の `pane` にある、下に置いたヘッダーへの対応は入っていない |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
 | `mods/editor/` | ファイルを Herdr の中のペインで開いて編集するエディタ。保存は Command + S |
 | `mods/my-files/` | Files パネル（標準の `files` mod 0.1.15 の複製）。ファイルをクリックすると `editor` で開く |
@@ -93,7 +93,8 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 値の取り方:
 
 - Claude Code が statusline に渡す JSON の `rate_limits` を、`hooks/usage.sh` が `~/.local/state/herdr-usage/limits.json` に書く。値が変わったときだけ書く。サイドバーはそれを読むだけ
-- `install.sh` は `~/.claude/settings.json` の `statusLine.command` の前に `~/.claude/hooks/herdr-usage.sh tee |` を足す。statusline を使っていなければ、何も出さない `herdr-usage.sh` だけを登録する
+- `install.sh` は `~/.claude/settings.json` の `statusLine.command` を `~/.claude/hooks/herdr-usage.sh tee | { 元のコマンド; }` の形にする（`{ }` で包むので、`input=$(cat); …` のように複数のコマンドから成る statusline にも入力が届く）。statusline を使っていなければ、何も出さない `herdr-usage.sh` だけを登録する
+- 長く止まっていたセッションの statusline が古い値を渡しても、枠ごとに新しい方を残す（リセット時刻が後の枠、同じ枠なら % の大きい方）
 - 使用量はアカウントごとなので、Herdr の外の Claude からも書く
 
 注意点:
@@ -157,12 +158,16 @@ cd herdr-config
 ./install.sh
 ```
 
-`install.sh` は `~/.config/herdr-app` にファイルをコピーします（`HERDR_APP_HOME` を設定していればその場所）。上書きする前のファイルは `~/.config/herdr-app/.backup-<日時>/` に残します。そのあと Herdr でレイアウト `my-main` に切り替えます（`herdr-app do layout.switch '{"name":"my-main"}'`）。
+`install.sh` は `~/.config/herdr-app` にファイルをコピーします（`HERDR_APP_HOME` を設定していればその場所）。上書きする前のファイルは `~/.config/herdr-app/.backup-<日時>/` に残します。入れ先がこのリポジトリと重なっているときは、何もせずに止まります。
+
+`install.sh` はレイアウトを切り替えません。入れたあと、Herdr でレイアウト `my-main` に切り替えてください（`herdr-app do layout.switch '{"name":"my-main"}'`）。
+
+`install.sh` は、すべての mod を `herdr-app check` で確かめます。失敗した mod があっても hook の登録までは進め、最後に失敗した mod の名前を出して終了コード 1 で終わります。`~/.claude/settings.json` が JSON として読めないなど、Claude Code の設定を組み立てられないときは、何も変えずに止まります。
 
 ### 必要なもの
 
 - Herdr（`herdr-app` と、付いてくる `hc`）
-- `jq`（`brew install jq`）。ないと timeline の hook を登録しない
+- `jq`（`brew install jq`）。ないと、timeline の hook と使用量の statusline を登録せず、`keys.json` と `settings.json` を重ねずにまるごと置き換える
 - Claude Code（`claude`）にログイン済みであること。timeline は作業ツリーを作るのに `claude -p --model haiku` を呼ぶ
 - フォント HackGen（下の「フォント」）
 
@@ -172,10 +177,13 @@ cd herdr-config
 
 | 場所 | 変わること |
 | --- | --- |
-| `~/.config/herdr-app/settings.json` | 外観（dark）とフォントを、このリポジトリの設定で上書きする。前のファイルは `.backup-<日時>/` に残る |
+| `~/.config/herdr-app/settings.json` | 今のファイルに、このリポジトリの外観（dark）とフォントなどの値を重ねる。このリポジトリにある項目は上書きし、アプリで変えたほかの項目は残す。前のファイルは `.backup-<日時>/` に残る |
+| `~/.config/herdr-app/keys.json` | 今のファイルに、このリポジトリのキー割り当てを重ねる。同じキーはこのリポジトリの割り当てになり、自分で足したキーは残る。前のファイルは `.backup-<日時>/` に残る |
 | `~/.claude/hooks/herdr-timeline.sh` | timeline の hook を置く |
-| `~/.claude/settings.json` | Claude Code の hook を 3 つ登録する（`SessionStart`・`UserPromptSubmit`・`Stop`）。どのプロジェクトの Claude にも効くが、Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない。書き換える前のファイルは `~/.claude/settings.json.bak-<日時>` に残る |
+| `~/.claude/hooks/herdr-usage.sh` | サイドバーの使用量を書き出すスクリプトを置く |
+| `~/.claude/settings.json` | Claude Code の hook を 3 つ登録する（`SessionStart`・`UserPromptSubmit`・`Stop`）。どのプロジェクトの Claude にも効くが、Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない。また `statusLine.command` を `~/.claude/hooks/herdr-usage.sh tee \| { 元のコマンド; }` にする（statusline がなければ `herdr-usage.sh` だけ）。書き換える前のファイルは `~/.claude/settings.json.bak-<日時>` に残る |
 | `~/.local/state/herdr-timeline/` | 作業ツリーの記録を置く |
+| `~/.local/state/herdr-usage/` | 使用量（`limits.json`）を置く |
 
 timeline の hook は、Herdr の中で Claude に指示を送るたび、返答が終わるたびに Haiku を 1 回ずつ呼びます。そのぶん Claude の使用量が増えます。
 
@@ -184,14 +192,31 @@ timeline の hook は、Herdr の中で Claude に指示を送るたび、返答
 `~/.claude/settings.json` から `herdr-timeline.sh` を含む hook を消し、hook 本体と記録を消します。
 
 ```sh
-jq '.hooks |= (with_entries(.value |= map(select(any(.hooks[]?; .command | contains("herdr-timeline.sh")) | not)))
-               | with_entries(select(.value | length > 0)))' ~/.claude/settings.json > /tmp/s.json \
+jq '.hooks |= with_entries(.value as $before
+      | .value |= map(select(any(.hooks[]?; (.command // "") | contains("herdr-timeline.sh")) | not))
+      | select((.value | length) > 0 or ($before | length) == 0))' ~/.claude/settings.json > /tmp/s.json \
   && cat /tmp/s.json > ~/.claude/settings.json && rm /tmp/s.json
 rm -f ~/.claude/hooks/herdr-timeline.sh
 rm -rf ~/.local/state/herdr-timeline
 ```
 
 もう一度 `install.sh` を実行すると、また登録されます。
+
+### 使用量の statusline を外す
+
+`statusLine.command` を元のコマンドに戻し（`herdr-usage.sh` だけだったときは statusline を消し）、スクリプトと記録を消します。`herdr-usage.sh` だけを消すと、元の statusline に入力が届かず、空になります。
+
+```sh
+jq '"~/.claude/hooks/herdr-usage.sh" as $u
+    | (.statusLine.command // "") as $c
+    | if $c == $u then del(.statusLine)
+      elif ($c | startswith($u + " tee | { ")) then .statusLine.command = ($c | ltrimstr($u + " tee | { ") | sub("\n}$"; ""))
+      elif ($c | startswith($u + " tee | ")) then .statusLine.command = ($c | ltrimstr($u + " tee | "))
+      else . end' ~/.claude/settings.json > /tmp/s.json \
+  && cat /tmp/s.json > ~/.claude/settings.json && rm /tmp/s.json
+rm -f ~/.claude/hooks/herdr-usage.sh
+rm -rf ~/.local/state/herdr-usage
+```
 
 ### フォント
 

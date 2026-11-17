@@ -69,6 +69,13 @@ function setFolded(id, folded) {
   if (folded) s.add(id); else s.delete(id);
   setShared(FOLDED, [...s]);
 }
+// localStorage の値。壊れていたら（手で書き換えた等）、サイドバーごと落とさずに初期値を使う。
+function stored(key, fallback) {
+  try {
+    const v = JSON.parse(localStorage.getItem(key) ?? "null");
+    return v !== null && typeof v === typeof fallback && Array.isArray(v) === Array.isArray(fallback) ? v : fallback;
+  } catch { return fallback; }
+}
 // The last agents each machine reported (the same cache as `new-menu`).
 const KNOWN = "new-menu.agents";
 
@@ -143,13 +150,13 @@ export default class SpaceTree extends View {
   init(_props, cx) {
     if (props()?.launch) return this.initLauncher(cx);
     // Each agent's last state and when it changed (ms), kept across restarts.
-    this.changed = JSON.parse(localStorage.getItem("changed") ?? "{}");
+    this.changed = stored("changed", {});
     this.hoverSpace = null;
     this.dragAgent = null; // the agent row being dragged (its tab moves)
     this.overAgent = null;
     cx.timer.every(30000, (cx) => {
       // 使用量のフォルダーがまだなかった等で見張りが止まっていたら、読み直して見張り直す。
-      if (!this.usageWatching) { this.loadUsage(cx); this.watchUsage(cx); }
+      if (!this.usageWatching && !this.closed) { this.loadUsage(cx); this.watchUsage(cx); }
       cx.notify();
     });
     this.usage = null;
@@ -162,7 +169,7 @@ export default class SpaceTree extends View {
     this.busy = {}; // pane -> an agent working or a program in front of its shell
     this.ready = {}; // machine -> its layout was readable at the last look
     this.at = {}; // space -> its where() at the last look
-    this.watching = new Set(); // local repos' git folders
+    this.watching = new Map(); // local repos' git folders -> { wait: its pending watchFolder }
     // Spaces made while this runs wait (at most a moment) for their git, so a
     // worktree appears under its repo instead of jumping there.
     this.shown = new Set(spaces().map((s) => s.id));
@@ -170,9 +177,9 @@ export default class SpaceTree extends View {
     this.pressed = null;
     this.over = null;
     this.machines = [];
-    this.reconnecting = JSON.parse(localStorage.getItem("machines.reconnecting") ?? "{}");
+    this.reconnecting = stored("machines.reconnecting", {});
     for (const state of Object.values(this.reconnecting)) state.busy = false;
-    this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
+    this.folded = new Set(stored("machines.folded", []));
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
@@ -295,7 +302,7 @@ export default class SpaceTree extends View {
         for (const key of keys) await this.check(key, cx);
       }
       const used = new Set(Object.values(this.git).filter(Boolean).map((g) => JSON.parse(g.repo)).filter(([on]) => !on).map(([, repo]) => repo));
-      for (const repo of this.watching) if (!used.has(repo)) this.watching.delete(repo);
+      for (const repo of [...this.watching.keys()]) if (!used.has(repo)) this.unwatch(repo);
       this.refreshing = false;
       cx.notify();
     });
@@ -341,16 +348,34 @@ export default class SpaceTree extends View {
 
   watch(repo, cx) {
     if (this.watching.has(repo)) return;
-    this.watching.add(repo);
+    // 見張りごとの印。止めたあとに同じリポジトリを見張り直しても、古いループが新しい見張りを消さないように。
+    const entry = { wait: null };
+    this.watching.set(repo, entry);
+    const mine = () => this.watching.get(repo) === entry && !this.closed;
     cx.spawn(async (cx) => {
       try {
-        while (this.watching.has(repo)) {
-          await watchFolder(repo);
-          const mine = JSON.stringify([null, repo]);
-          if (this.watching.has(repo)) this.refreshGit(Object.keys(this.git).filter((k) => this.git[k]?.repo === mine), cx);
+        while (mine()) {
+          entry.wait = watchFolder(repo);
+          await entry.wait;
+          const key = JSON.stringify([null, repo]);
+          if (mine()) this.refreshGit(Object.keys(this.git).filter((k) => this.git[k]?.repo === key), cx);
         }
-      } catch { this.watching.delete(repo); }
+      } catch {}
+      if (this.watching.get(repo) === entry) this.watching.delete(repo);
     });
+  }
+
+  // 見張りの数はアプリ全体で限りがあるので、出さなくなったリポジトリの見張りは待ちごと止める。
+  unwatch(repo) {
+    const entry = this.watching.get(repo);
+    this.watching.delete(repo);
+    entry?.wait?.cancel?.();
+  }
+
+  async close() {
+    this.closed = true;
+    for (const repo of [...this.watching.keys()]) this.unwatch(repo);
+    this.usageWait?.cancel?.();
   }
 
   // hooks/usage.sh が書いた使用量を読む。読めなければ前の値のまま。
@@ -367,9 +392,10 @@ export default class SpaceTree extends View {
     this.usageWatching = true;
     cx.spawn(async (cx) => {
       try {
-        while (true) {
-          await watchFolder(USAGE_DIR());
-          this.loadUsage(cx);
+        while (!this.closed) {
+          this.usageWait = watchFolder(USAGE_DIR());
+          await this.usageWait;
+          if (!this.closed) this.loadUsage(cx);
         }
       } catch {}
       this.usageWatching = false;

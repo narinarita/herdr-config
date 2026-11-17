@@ -31,7 +31,9 @@ if command -v hc >/dev/null; then
     p=$PPID
     for _ in 1 2 3 4 5 6 7 8; do
       [ -n "$p" ] && [ "$p" -gt 1 ] || break
-      if [ "$(basename "$(ps -o comm= -p "$p" 2>/dev/null)")" = claude ]; then
+      comm=$(basename "$(ps -o comm= -p "$p" 2>/dev/null)")
+      # npm で入れた Claude はプロセス名が node なので、引数に claude があるかで見る。
+      if [ "$comm" = claude ] || { [ "$comm" = node ] && ps -o args= -p "$p" 2>/dev/null | grep -q '/claude\|claude-code'; }; then
         [ "$p" = "$fg" ] || exit 0
         break
       fi
@@ -96,18 +98,22 @@ PROMPT_START='あなたは、AI エージェントの作業を作業ツリーと
 - 指示が別の目標なら、new_goal を true にし、goal を指示から日本語1文（40字以内）で書き、items は指示を表す項目1つ（state は doing）だけにする。
 - 指示が質問や雑談だけで作業を頼んでいないなら、changed を false にして、今のツリーをそのまま返す。それ以外は changed を true。'
 
+# Claude Code が自分で入れるメッセージの先頭のタグ。これで始まるものは指示と見なさない。
+# （< で始まる指示すべてを外すと、HTML や貼り付けた文章で始まる本物の指示まで落ちる）
+SYSTEM_TAGS='command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|task-notification|bash-input|bash-stdout|bash-stderr|system-reminder|user-prompt-submit-hook'
+
 # 今回のやりとり: transcript の最後の「本物のユーザーの指示」から後ろを、短い行にして返す。
-# スキルの展開 (isMeta)、<command-…> や <task-notification> などのタグで始まるもの、中断の印は指示と見なさない。
+# スキルの展開 (isMeta)、/compact の要約 (isCompactSummary)、SYSTEM_TAGS のタグで始まるもの、中断の印は指示と見なさない。
 # 長いときは、指示（先頭）と、状態を決めるのに大事な最後の部分を残し、間を省く。
 this_turn() {
   local path
   path=$(jq -r '.transcript_path // empty' <<<"$input")
   [ -f "$path" ] || return
-  tail -n 800 "$path" | jq -rs '
+  tail -n 800 "$path" | jq -rs --arg tags "^<($SYSTEM_TAGS)[ >]" '
     def cut($n): if length > $n then .[0:$n] + "…" else . end;
     def text: .message.content | if type == "string" then . else [ .[]? | select(.type == "text") | .text ] | join("\n") end;
-    def prompt: .type == "user" and (.isMeta | not)
-      and (text | ltrimstr(" ") | length > 0 and (startswith("<") or startswith("[Request interrupted") | not));
+    def prompt: .type == "user" and (.isMeta | not) and (.isCompactSummary | not)
+      and (text | ltrimstr(" ") | length > 0 and (test($tags) or startswith("[Request interrupted") | not));
     def brief: (.input // {}) as $i
       | .name + " " + ($i.description // $i.file_path // $i.path // $i.pattern // $i.command // $i.url // $i.prompt // "" | tostring | cut(120));
     [ .[] | select(.type == "user" or .type == "assistant") ] as $all
@@ -128,16 +134,26 @@ this_turn() {
 }
 
 # 更新は 1 つずつ。前の更新が書いたツリーを元に次の更新が作るように、読む前から書き終わるまでロックする。
-# 3 分待っても取れなければ（落ちた更新が残したロック）、取り除いて取り直す。
+# ロックには持ち主の PID を置き、持ち主のプロセスがもういない（落ちた更新が残した）ときだけ取り除く。
+# 待った時間では外さない（Haiku が遅いと、動いている更新のロックまで外して 2 つが同時に書いてしまうため）。
+# PID を書く前の一瞬は中身が空なので、空のまま 1 分たったものだけを残骸と見なす。
 lock() {
-  local i=0
+  local owner
   until mkdir "$plan.lock" 2>/dev/null; do
-    i=$((i + 1))
-    if [ "$i" -gt 900 ]; then rmdir "$plan.lock" 2>/dev/null; i=0; fi
+    owner=$(cat "$plan.lock/pid" 2>/dev/null)
+    if [ -n "$owner" ]; then
+      kill -0 "$owner" 2>/dev/null || { rm -f "$plan.lock/pid"; rmdir "$plan.lock" 2>/dev/null; }
+    elif [ -n "$(find "$plan.lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      rmdir "$plan.lock" 2>/dev/null
+    fi
     sleep 0.2
   done
+  echo "$BASHPID" >"$plan.lock/pid"   # update はサブシェルで動くので $$ ではなく $BASHPID
 }
-unlock() { rmdir "$plan.lock" 2>/dev/null; }
+unlock() {
+  [ "$(cat "$plan.lock/pid" 2>/dev/null)" = "$BASHPID" ] || return 0
+  rm -f "$plan.lock/pid"; rmdir "$plan.lock" 2>/dev/null
+}
 
 update() {
   local turn="$1" turn_text="$2" prompt="$3" old out
@@ -164,7 +180,7 @@ update() {
        items: [ $out.items[] | {title, state} + (if (.children // []) | length > 0 then {children: [ .children[] | {title, state} ]} else {} end) ],
        # 別の目標に移るとき、前の目標を past の先頭に残す。
        past: ((if $out.new_goal and (($old.items // []) | length) > 0
-               then [{goal: ($old.goal // ""), started: ($old.started // null), ended: $t, items: $old.items}] else [] end)
+               then [{goal: ($old.goal // ""), started: ($old.started // null), ended: ($old.updated // $t), items: $old.items}] else [] end)
               + ($old.past // []))[0:20]}
     ' >"$plan.tmp.$$" && mv "$plan.tmp.$$" "$plan"
   fi
@@ -193,11 +209,10 @@ case "$1" in
     ;;
   prompt)
     text=$(jq -r '.prompt // "" | .[0:6000]' <<<"$input")   # 文字単位で切る
-    # 引数のないスラッシュコマンド（/clear、/compact など）と、タグで始まるメッセージは指示と見なさない。
+    # 引数のないスラッシュコマンド（/clear、/compact など）と、Claude Code が入れたタグのメッセージは指示と見なさない。
     # 文字列全体で判定する（grep だと、複数行の指示の 1 行が /path だけでも当たる）。
-    case "$text" in
-      ""|"<"*) exit 0 ;;
-    esac
+    [ -n "$text" ] || exit 0
+    [[ $text =~ ^\<($SYSTEM_TAGS)[\ \>] ]] && exit 0
     [[ $text =~ ^/[^[:space:]]+[[:space:]]*$ ]] && exit 0
     turn=$(now_ms)
     echo "$turn" >"$pending"

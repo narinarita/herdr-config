@@ -7,7 +7,7 @@
 // shared("editor.panes") に { id: ペイン ID } を覚えて、差し替えの依頼の宛先にする。
 // 差し替えの依頼は shared("editor.request") = { pane, file, on, at }。
 //
-// 保存は ⌘S だけ。writeTextFile に開いたときの中身を expected として渡すので、
+// 保存は ⌘S だけ（keys.json の mod:editor が editor.save を送り、nextCommand で受ける）。writeTextFile に開いたときの中身を expected として渡すので、
 // ほかで書き換えられたファイルは黙って上書きしない。
 // 別のマシン（on がある）のファイルは読み取り専用（writeTextFile がこの Mac にしか書けないため）。
 
@@ -101,6 +101,7 @@ export default class EditorPane extends View {
 
   open(file, on, cx) {
     this.state?.release();
+    this.waiting?.cancel?.(); this.waiting = null; // 前のファイルのフォルダーの見張りを止める
     Object.assign(this, { file, on, state: null, saved: "", current: "", lines: 0, error: null, banner: null, pending: null, note: "", preview: false });
     this.generation = (this.generation ?? 0) + 1;
     const generation = this.generation;
@@ -156,7 +157,8 @@ export default class EditorPane extends View {
     cx.spawn(async (cx) => {
       try {
         while (generation === this.generation) {
-          const changed = await watchFolder(folder);
+          this.waiting = watchFolder(folder);
+          const changed = await this.waiting;
           if (generation !== this.generation) return;
           if (changed.includes(file) || changed.includes(folder)) await this.checkDisk(cx);
         }
@@ -209,14 +211,15 @@ export default class EditorPane extends View {
     if (what === "discard-switch") { const p = this.pending; this.pending = null; this.open(p.file, p.on, cx); }
     if (what === "cancel") { this.pending = null; this.banner = null; }
     if (what === "reload") {
-      this.banner = null;
+      // 読み直したら、保存してから開くはずだったファイルの依頼も取り下げる（あとの ⌘S で勝手に切り替わらないように）。
+      this.banner = null; this.pending = null;
       cx.spawn(async (cx) => {
         const text = await readTextFile(this.file, { on: this.on }).catch(() => null);
         if (text !== null) { this.replace(text); this.note = "読み直しました"; this.noteError = false; }
         cx.notify();
       });
     }
-    if (what === "keep") { this.banner = null; this.note = "手元の変更を残しました。保存すると上書きの確認が出ます"; this.noteError = true; }
+    if (what === "keep") { this.banner = null; this.pending = null; this.note = "手元の変更を残しました。保存すると上書きの確認が出ます"; this.noteError = true; }
     if (what === "overwrite") this.save(true, cx);
     cx.notify();
   }
@@ -279,12 +282,11 @@ export default class EditorPane extends View {
       .child(div().flex_1().min_w(0).truncate().text_right().text_color(this.noteError ? t.blocked : t.done).child(this.note ?? ""));
 
     return v_flex().id("editor").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(13)
-      .on_key_down((e, cx) => { if (e.keystroke === "cmd-s" || e.keystroke === "ctrl-s") { this.save(false, cx); cx.stop_propagation(); } })
       .child(head)
       .when(Boolean(this.banner), (el) => el.child(this.bannerView(t)))
       .child(body)
       .child(status);
   }
 
-  async close() { this.state?.release(); }
+  async close() { this.generation = (this.generation ?? 0) + 1; this.waiting?.cancel?.(); this.state?.release(); }
 }

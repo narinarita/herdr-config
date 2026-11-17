@@ -66,10 +66,12 @@ export default class Files extends View {
     this.watched = root;
     const context = this.context;
     cx.spawn(async cx => {
-      try { while (this.context === context) { await watchFolder(root); if (this.current(context)) this.refresh(cx); } }
+      try { while (this.context === context && !this.closed) { this.waiting = watchFolder(root); await this.waiting; if (this.current(context)) this.refresh(cx); } }
       catch { if (this.context === context) this.watched = null; }
     });
   }
+
+  async close() { this.closed = true; this.waiting?.cancel?.(); }
 
   current(context) {
     return this.context === context && key() === context.key;
@@ -89,6 +91,7 @@ export default class Files extends View {
     if (next !== this.context?.key) {
       if (this.context) this.saved.set(this.context.key, { folders: this.folders });
       const saved = this.saved.get(next);
+      this.waiting?.cancel?.(); this.waiting = null; // 前のフォルダーの見張りを止める
       this.context = { key: next, cwd, on }; this.root = cwd; this.on = on; this.entries = new Map(); this.folders = new Set(saved?.folders);
       this.pending = new Set(); this.marks = {}; this.watched = null; this.error = null; this.limited = false;
       this.loading = false;
