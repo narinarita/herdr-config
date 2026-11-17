@@ -452,7 +452,8 @@ export default class SpaceTree extends View {
     return h_flex().id(`sub-${k.address}`).h(26).pl(8).pr(8).flex_none().rounded(8).items_center().gap(8).text_size(12)
       .when(on, (el) => el.bg(t.raised))
       .hover((el) => el.bg(t.hover))
-      .on_click(() => run("terminal.peek", { terminal: k.address }))
+      // One with its own pane goes to that pane; one without, to a peek.
+      .on_click(() => this.panesOf?.has(k.address) ? run("pane.focus", { pane: this.panesOf.get(k.address) }) : run("terminal.peek", { terminal: k.address }))
       .child(this.elbow(t, s.depth + 1, indent))
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
@@ -795,7 +796,11 @@ export default class SpaceTree extends View {
     this.shownAgent = focused()?.agent;
     this.track(list, Date.now());
     this.bySpace = new Map();
+    // A sub-agent given a pane (terminal.keep) is also in agents(): show it only under its parent.
+    const nested = new Set(list.flatMap((a) => this.tree(a.address).map((s) => s.t.address)));
+    this.panesOf = new Map(list.map((a) => [a.address, a.pane]));
     for (const a of list) {
+      if (nested.has(a.address)) continue;
       if (!this.bySpace.has(a.space)) this.bySpace.set(a.space, []);
       this.bySpace.get(a.space).push(a);
     }
