@@ -16,7 +16,7 @@
 | `mods/pomodoro/` | ステータスバーのポモドーロタイマー。全 space で共通の 1 つ |
 | `mods/my-tabs/` | タブの帯（標準の `tabs` mod 0.1.16 の複製）。右上の Files / Changes の横に Timeline の切り替えを足す |
 | `mods/timeline/` | 右パネルの Timeline。フォーカスしているターミナルの Claude の目標と作業ツリーを出す |
-| `hooks/timeline.sh` | 作業ツリーを書く Claude Code の hook（Stop / SessionStart）。`install.sh` が `~/.claude/hooks/herdr-timeline.sh` に置き、`~/.claude/settings.json` に登録する |
+| `hooks/timeline.sh` | 作業ツリーを書く Claude Code の hook（Stop / UserPromptSubmit / SessionStart）。`install.sh` が `~/.claude/hooks/herdr-timeline.sh` に置き、`~/.claude/settings.json` に登録する |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く。`editor` の中では `cmd-s` で保存） |
 | `settings.json` | 外観とフォントの設定 |
 
@@ -59,6 +59,7 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 作業ツリーの作り方:
 
 - Claude が返答を終えるたびに、`hooks/timeline.sh`（Stop hook）が今回のやりとり（指示・返答・使った操作）と今のツリーを Haiku（`claude -p --model haiku`）に渡し、更新したツリーを書く。同じ目標の続きなら項目は変えずに状態だけ直し、別の目標なら作り直す。質問に答えただけのときは変えない
+- 指示を送った時点でも（UserPromptSubmit hook）、目標と項目の状態だけを直す。指示にあたる項目を ◐ にし、なければ1つ足し、別の目標なら目標を変える。作業を細かく分けるのは返答の終わりに任せる。質問や雑談、引数のないスラッシュコマンドでは変えない
 - 項目は状態だけを持つ（% を持たない）ので、作業の区切りごとの更新で、実際の作業とのずれが小さい
 - 更新は 2〜5 秒かかるので、バックグラウンドで動かし、その間はパネルに「更新中…」を出す
 - 新しいセッション（起動・`/clear`）では、前の作業のツリーを空にする。再開（resume）では残す
@@ -71,7 +72,7 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 
 注意点:
 
-- Claude が返答を終えるたびに Haiku を 1 回呼ぶので、そのぶん使用量が増える
+- 指示を送ったときと Claude が返答を終えたときに、Haiku を 1 回ずつ呼ぶので、そのぶん使用量が増える
 - ツリーは Haiku の解釈なので、項目の切り方や状態が実際とずれることがある
 - 別のマシンの Space のターミナルの作業ツリーは出せない
 - 登録前から動いている Claude のセッションでは更新されないことがある。そのときは Claude を起動し直す

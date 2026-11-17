@@ -3,8 +3,10 @@
 # Herdr のターミナル ($HC_TERMINAL_ID) で動いているときだけ動く。
 #
 # 使い方 (~/.claude/settings.json の hooks から、種類を引数で渡す):
+#   prompt  UserPromptSubmit  指示を送った時点で、目標と項目の状態だけを直す（指示にあたる項目を doing にする。
+#                         なければ 1 つ足す。別の目標なら目標を変える）。作業を細かく分けるのは stop に任せる
 #   stop    Stop          今回のやりとり（指示・返答・操作）と今のツリーを Haiku に渡し、更新したツリーを書く。
-#                         2〜5 秒かかるので、バックグラウンドで動かして Claude を待たせない
+#   どちらも 2〜5 秒かかるので、バックグラウンドで動かして Claude を待たせない
 #   start   SessionStart  新しいセッション（起動・/clear）では、前の作業のツリーを空にする。再開 (resume) では残す
 #
 # 書き先: ~/.local/state/herdr-timeline/<terminal>.plan.json
@@ -62,6 +64,13 @@ PROMPT='あなたは、AI エージェントの作業を作業ツリーとして
 - 質問に答えただけ、または雑談だけで作業が進んでいないなら、changed を false にして、今のツリーをそのまま返す（今のツリーがなければ goal は空、items は空）。それ以外は changed を true。
 - 話に出ていない作業を推測で足さない。ユーザーが頼んだ作業と、エージェントがこれからやると言った作業は todo で足してよい。'
 
+PROMPT_START='あなたは、AI エージェントの作業を作業ツリーとして管理する係です。
+標準入力には「今の作業ツリー」（JSON。まだなければ null か、items が空）と、ユーザーが今送った「指示」があります。エージェントはまだ作業を始めていません。
+次のことだけをして、作業ツリーを返してください。作業を細かく分けたり、推測で項目を足したりしないでください。
+- 指示が今の目標の続きなら、new_goal は false。goal と既存の項目の title・順番は変えない。指示にあたる項目があれば、その state を doing にする（子のある項目なら、あたる子を doing に）。なければ、指示を表す項目を1つ（25字以内、state は doing）末尾に足す。
+- 指示が別の目標なら、new_goal を true にし、goal を指示から日本語1文（40字以内）で書き、items は指示を表す項目1つ（state は doing）だけにする。
+- 指示が質問や雑談だけで作業を頼んでいないなら、changed を false にして、今のツリーをそのまま返す。それ以外は changed を true。'
+
 # 今回のやりとり: transcript の最後の「本物のユーザーの指示」から後ろを、短い行にして返す。
 # スキルの展開 (isMeta)、<command-…> や <task-notification> などのタグで始まるもの、中断の印は指示と見なさない。
 # 長いときは、指示（先頭）と、状態を決めるのに大事な最後の部分を残し、間を省く。
@@ -106,7 +115,7 @@ lock() {
 unlock() { rmdir "$plan.lock" 2>/dev/null; }
 
 update() {
-  local turn="$1" turn_text="$2" old out
+  local turn="$1" turn_text="$2" prompt="$3" old out
   lock
   old=$(cat "$plan" 2>/dev/null || echo null)
   # 待っている間に新しいセッションで空にされていたら（turn が新しい）、この古いやりとりでは更新しない。
@@ -116,7 +125,7 @@ update() {
   out=$(printf '今の作業ツリー:\n%s\n\n今回のやりとり:\n%s\n' "$old" "$turn_text" |
     env -u HC_TERMINAL_ID HERDR_TIMELINE_SKIP=1 claude -p --model haiku --tools "" --no-session-persistence \
       --setting-sources "" --strict-mcp-config --disable-slash-commands \
-      --output-format json --json-schema "$SCHEMA" "$PROMPT" 2>/dev/null |
+      --output-format json --json-schema "$SCHEMA" "$prompt" 2>/dev/null |
     jq -c '.structured_output // empty' 2>/dev/null)
   if [ -n "$out" ] && [ "$(jq -r .changed <<<"$out")" = true ] &&
      [ "$(jq -r '.turn // 0' "$plan" 2>/dev/null || echo 0)" -le "$turn" ]; then
@@ -147,7 +156,19 @@ case "$1" in
     [ -n "$text" ] || exit 0
     turn=$(now_ms)
     echo "$turn" >"$pending"
-    ( update "$turn" "$text" ) </dev/null >/dev/null 2>&1 &
+    ( update "$turn" "$text" "$PROMPT" ) </dev/null >/dev/null 2>&1 &
+    disown
+    ;;
+  prompt)
+    text=$(jq -r '.prompt // ""' <<<"$input")
+    # 引数のないスラッシュコマンド（/clear、/compact など）と、タグで始まるメッセージは指示と見なさない。
+    case "$text" in
+      ""|"<"*) exit 0 ;;
+    esac
+    printf '%s' "$text" | grep -qE '^/[^[:space:]]+[[:space:]]*$' && exit 0
+    turn=$(now_ms)
+    echo "$turn" >"$pending"
+    ( update "$turn" "ユーザー: $(printf '%s' "$text" | head -c 6000)" "$PROMPT_START" ) </dev/null >/dev/null 2>&1 &
     disown
     ;;
 esac

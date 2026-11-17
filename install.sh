@@ -31,10 +31,10 @@ chmod +x "$claude_dir/hooks/herdr-timeline.sh"
 if command -v jq >/dev/null 2>&1; then
   settings="$claude_dir/settings.json"
   [ -f "$settings" ] || echo '{}' >"$settings"
-  # 使う hook（stop / start）を足し、前の版で登録した使わない hook（prompt / notify / tool）を外す。
+  # 使う hook（stop / start / prompt）を足し、前の版で登録した使わない hook（notify / tool）を外す。
   jq '
     def ours: (.command // "") | startswith("~/.claude/hooks/herdr-timeline.sh");
-    def wanted: (.command // "") as $c | ["~/.claude/hooks/herdr-timeline.sh stop", "~/.claude/hooks/herdr-timeline.sh start"] | index($c);
+    def wanted: (.command // "") as $c | ["~/.claude/hooks/herdr-timeline.sh stop", "~/.claude/hooks/herdr-timeline.sh start", "~/.claude/hooks/herdr-timeline.sh prompt"] | index($c);
     def add($event; $arg):
       ("~/.claude/hooks/herdr-timeline.sh " + $arg) as $cmd
       | if ([.hooks[$event][]?.hooks[]?.command] | index($cmd)) then .
@@ -43,6 +43,7 @@ if command -v jq >/dev/null 2>&1; then
                | with_entries(select(.value | length > 0)))
     | add("Stop"; "stop")
     | add("SessionStart"; "start")
+    | add("UserPromptSubmit"; "prompt")
   ' "$settings" >"$settings.tmp" || { rm -f "$settings.tmp"; echo "Could not read $settings as JSON: the timeline hooks were not registered" >&2; exit 1; }
   jq -S . "$settings" >"$settings.a" && jq -S . "$settings.tmp" >"$settings.b"
   if cmp -s "$settings.a" "$settings.b"; then
