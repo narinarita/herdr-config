@@ -5,7 +5,7 @@
 //   ┌───────────────────────────────────────┐
 //   │ 作業ツリーを区切りごとに更新する   進行中 │   <- 目標
 //   │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━── │
-//   │ 4/6 件 · 38 分              66.7%     │
+//   │ 2/4 件 · 38 分              50.0%     │
 //   └───────────────────────────────────────┘
 //   ● 作業ツリーの % 表示をなくす
 //   ◐ Stop hook で作業ツリーを更新する
@@ -61,7 +61,7 @@ function minutes(from) {
 
 export default class Timeline extends View {
   init(_props, cx) {
-    this.key = null; this.plan = null; this.pending = false; this.loaded = false;
+    this.key = null; this.plan = null; this.pendingAt = null; this.loaded = false; this.seq = 0;
     if (checking()) return;
     this.watch(cx);
     // 経過時間を進める時計。見張りが止まっていたら（フォルダーがまだない等）ここで読み直し、見張り直す。
@@ -92,15 +92,16 @@ export default class Timeline extends View {
   }
 
   load(id, cx) {
+    // 読み込みが重なったら、最後に始めたものだけを使う（古い結果が後から入らないように）。
+    const seq = ++this.seq;
     cx.spawn(async (cx) => {
       const base = `${DIR()}/${id.replaceAll("/", "_")}`;
       let text = null, mark = null;
       try { text = await readTextFile(`${base}.plan.json`); } catch {}
       try { mark = await readTextFile(`${base}.plan.pending`); } catch {}
-      if (this.key !== id) return;
+      if (this.key !== id || seq !== this.seq) return;
       this.plan = parse(text);
-      // 更新の印が 2 分を超えて残っていたら、更新が落ちたものとみなす。
-      this.pending = Boolean(mark) && Date.now() / 1000 - Number(mark) < 120;
+      this.pendingAt = mark ? Number(mark) || null : null;   // 更新を始めた時刻（ミリ秒）
       this.loaded = true;
       cx.notify();
     });
@@ -112,7 +113,7 @@ export default class Timeline extends View {
     const now = current();
     const where = now.id || !this.key ? now : { id: this.key, remote: this.key.includes("/") };
     if (where.id !== this.key) {
-      this.key = where.id; this.plan = null; this.pending = false; this.loaded = false;
+      this.key = where.id; this.plan = null; this.pendingAt = null; this.loaded = false;
       if (where.id && !where.remote && !checking()) this.load(where.id, cx);
     }
     const root = v_flex().id("timeline").size_full().min_h(0).rounded(10).overflow_hidden()
@@ -126,6 +127,8 @@ export default class Timeline extends View {
     const title = agent?.title?.replace(/^[^\p{L}\p{N}]+/u, "").trim() || agent?.tab_name || pane?.title || where.id;
     const status = agent?.status ?? pane?.status ?? null;
 
+    // 更新の印が 2 分を超えて残っていたら、更新が落ちたものとみなす（印は消えないので、描くたびに比べる）。
+    this.pending = Boolean(this.pendingAt) && Date.now() - this.pendingAt < 120000;
     root.child(this.header(t, title, status, space?.name, pane?.branch));
     if (!this.plan?.items.length) {
       return root.child(this.empty(t, !this.loaded ? "読み込み中…" : this.pending

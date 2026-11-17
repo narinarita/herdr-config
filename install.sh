@@ -39,7 +39,7 @@ if command -v jq >/dev/null 2>&1; then
       ("~/.claude/hooks/herdr-timeline.sh " + $arg) as $cmd
       | if ([.hooks[$event][]?.hooks[]?.command] | index($cmd)) then .
         else .hooks[$event] += [ {hooks: [{type: "command", command: $cmd}]} ] end;
-    .hooks |= (with_entries(.value |= (map(.hooks |= map(select((ours | not) or wanted))) | map(select(.hooks | length > 0))))
+    .hooks = ((.hooks // {}) | with_entries(.value |= (map(.hooks |= map(select((ours | not) or wanted))) | map(select(.hooks | length > 0))))
                | with_entries(select(.value | length > 0)))
     | add("Stop"; "stop")
     | add("SessionStart"; "start")
@@ -53,11 +53,14 @@ if command -v jq >/dev/null 2>&1; then
     # 書き換えるときだけ、日時付きで元を残す。
     saved="$settings.bak-$(date +%Y%m%d-%H%M%S)"
     cp "$settings" "$saved"
-    mv "$settings.tmp" "$settings"
+    # mv ではなく中身を書き込む（settings.json が dotfiles のシンボリックリンクでも、リンクのまま残るように）。
+    cat "$settings.tmp" >"$settings" && rm -f "$settings.tmp"
     echo "Registered the timeline hooks in $settings (previous copy: $saved)"
   fi
 else
   echo "jq is not installed: the timeline hooks were not registered" >&2
 fi
+# 前の版（出来事の並び）が書いた記録は使わないので消す。
+find "$HOME/.local/state/herdr-timeline" \( -name '*.jsonl' -o -name '*.todos.json' \) -delete 2>/dev/null || true
 
 echo "Done. Switch with: herdr-app do layout.switch '{\"name\":\"my-main\"}'"
