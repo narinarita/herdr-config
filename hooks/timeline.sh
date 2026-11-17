@@ -23,10 +23,30 @@ mkdir -p "$dir"
 input=$(cat)
 session=$(jq -r '.session_id // ""' <<<"$input")
 
-# kind, text, [id] を 1 行追記する。本文は 1 件 400 字まで。
+# 追記と切り詰めが重なると、切り詰めの間に足された行が消える。mkdir をロックにして順番に書く。
+# 1 秒待っても取れなければ（落ちたプロセスが残したロック）、取り除いて進む。
+lock() {
+  local i=0
+  until mkdir "$file.lock" 2>/dev/null; do
+    i=$((i + 1))
+    if [ "$i" -gt 50 ]; then rmdir "$file.lock" 2>/dev/null; mkdir "$file.lock" 2>/dev/null; return; fi
+    sleep 0.02
+  done
+}
+unlock() { rmdir "$file.lock" 2>/dev/null; }
+
+# 文字数（ロケールに左右されない。bash の ${#x} は LANG がないとバイト数になる）。
+chars() { jq -rn --arg s "$1" '$s | length'; }
+
+# kind, text, [id] を 1 行追記する。本文は report が 4000 字、ほかは 400 字まで。
 emit() {
-  jq -cn --arg kind "$1" --arg text "$2" --arg id "${3:-}" --arg session "$session" --argjson t "$(date +%s)" \
-    '{t: $t, kind: $kind, text: ($text | gsub("\\s+"; " ") | ltrimstr(" ") | .[0:400]), session: $session} + (if $id == "" then {} else {id: $id} end)' >>"$file"
+  local line
+  line=$(jq -cn --arg kind "$1" --arg text "$2" --arg id "${3:-}" --arg session "$session" --argjson t "$(date +%s)" \
+    '{t: $t, kind: $kind, text: ($text | gsub("\\s+"; " ") | ltrimstr(" ") | .[0:(if $kind == "report" then 4000 else 400 end)]), session: $session}
+     + (if $id == "" then {} else {id: $id} end)') || return
+  lock
+  printf '%s\n' "$line" >>"$file"
+  unlock
 }
 
 # 長くなりすぎたら後ろの 400 件だけ残す。
@@ -34,7 +54,9 @@ trim() {
   local n
   n=$(wc -l <"$file" 2>/dev/null || echo 0)
   if [ "$n" -gt 600 ]; then
+    lock
     tail -n 400 "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+    unlock
   fi
 }
 
@@ -84,7 +106,7 @@ case "$1" in
     id="r$(date +%s)$$"
     emit report "$text" "$id"
     # 短い返答はそのまま。長いものだけ要約する (2 秒ほどかかるので待たない)。
-    if [ "${#text}" -gt 80 ]; then
+    if [ "$(chars "$text")" -gt 80 ]; then
       ( summarize "$id" "$text" ) </dev/null >/dev/null 2>&1 &
       disown
     fi
@@ -92,7 +114,14 @@ case "$1" in
     ;;
 
   notify)
+    # 許可の確認や質問だけを「確認待ち」にする。60 秒放置の「入力を待っています」(idle_prompt) などは記録しない。
+    type=$(jq -r '.notification_type // ""' <<<"$input")
     text=$(jq -r '.message // ""' <<<"$input")
+    case "$type" in
+      permission_prompt|elicitation_dialog) ;;
+      "") case "$text" in *"waiting for your input"*) exit 0 ;; esac ;;   # 種類を送らない古い版
+      *) exit 0 ;;
+    esac
     [ -n "$text" ] && emit wait "$text"
     ;;
 
@@ -131,15 +160,26 @@ case "$1" in
         cmd=$(jq -r '.tool_input.command // ""' <<<"$input")
         case "$cmd" in
           *"gh pr create"*|*"gh pr merge"*|*"gh pr ready"*)
-            out=$(jq -r '.tool_response | if type == "object" then (.stdout // "") else tostring end' <<<"$input")
-            url=$(grep -oE 'https://github\.com/[^ ]+/pull/[0-9]+' <<<"$out" | head -1)
-            [ -n "$url" ] || exit 0
-            ref=$(sed -E 's#https://github\.com/[^/]+/([^/]+)/pull/([0-9]+)#\1\#\2#' <<<"$url")
+            # gh は結果を stdout と stderr のどちらにも出す。create は URL を、merge と ready は
+            # 「Merged pull request owner/repo#9」「Pull request owner/repo#9 is marked as "ready for review"」を出す（URL はない）。
+            out=$(jq -r '.tool_response | if type == "object" then ((.stdout // "") + "\n" + (.stderr // "")) else tostring end' <<<"$input")
             case "$cmd" in
-              *"gh pr merge"*) emit pr "$ref をマージ" ;;
-              *"gh pr ready"*) emit pr "$ref を ready に" ;;
-              *) emit pr "$ref を作成" ;;
+              *"gh pr merge"*) grep -q "Merged pull request" <<<"$out" || exit 0; what="をマージ" ;;
+              *"gh pr ready"*) grep -q 'ready for review' <<<"$out" || exit 0; what="を ready に" ;;
+              *) what="を作成" ;;
             esac
+            ref=$(grep -oE 'https://github\.com/[^/ ]+/[^/ ]+/pull/[0-9]+' <<<"$out" | head -1 | sed -E 's#https://github\.com/[^/]+/([^/]+)/pull/([0-9]+)#\1\#\2#')
+            [ -n "$ref" ] || ref=$(grep -oE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+' <<<"$out" | head -1 | sed -E 's#^[^/]+/##')
+            if [ -z "$ref" ]; then
+              # 出力に番号がないときは、コマンドの引数（番号か URL）と origin のリポジトリ名から作る
+              # （worktree のフォルダ名はリポジトリ名と違うので使わない）。
+              num=$(grep -oE 'gh pr (merge|ready)[^|;&]*' <<<"$cmd" | grep -oE '(^| |/pull/)[0-9]+( |$)' | grep -oE '[0-9]+' | head -1)
+              [ -n "$num" ] || exit 0
+              repo=$(git -C "$(jq -r '.cwd // "."' <<<"$input")" remote get-url origin 2>/dev/null)
+              repo=${repo##*/}; repo=${repo%.git}
+              ref="$repo#$num"
+            fi
+            emit pr "$ref $what"
             ;;
         esac
         ;;

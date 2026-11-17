@@ -53,7 +53,8 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 右上の Timeline を押すと、右パネルに、フォーカスしているターミナルで動いている Claude の記録を出します。
 
 - 上に Last report。Claude の最後の返答を、Haiku（`claude -p --model haiku`）で1〜2文に要約したもの。要約は返答のあとバックグラウンドで作るので、数秒は返答そのものを出す。80 字以下の返答は要約しない
-- 許可や質問で止まっている間は、Last report の上に「確認待ち」を赤で出す
+- 許可や質問で止まっている間は、Last report の上に「確認待ち」を赤で出す。60 秒放置の「入力を待っています」という通知は記録しない
+- 要約が 1 分たっても届かなければ（失敗したとき）、返答をそのまま出す
 - その下に Timeline。あなたの指示、Report、タスクの変化（TodoWrite / TaskCreate / TaskUpdate）、PR の作成・マージ、確認待ち、セッションの開始を、日付ごとに新しい順に並べる。「すべて / Report / あなた / タスク」で絞り込める。行をクリックすると全文を出す
 - エディタなどターミナルでないペインに移っても、直前のターミナルの記録を出したままにする
 
@@ -61,7 +62,7 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 
 - `hooks/timeline.sh` を Claude Code の hook（SessionStart / UserPromptSubmit / Stop / Notification / PostToolUse）から呼ぶ。どの Space の Claude でも記録するため、登録先はグローバルの `~/.claude/settings.json`
 - Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない
-- 記録先は `~/.local/state/herdr-timeline/<ターミナル ID>.jsonl`。1 行 1 件で、600 件を超えたら後ろの 400 件だけ残す
+- 記録先は `~/.local/state/herdr-timeline/<ターミナル ID>.jsonl`。1 行 1 件で、600 件を超えたら後ろの 400 件だけ残す。本文は Report が 4000 字、ほかは 400 字まで
 - 要約用の `claude -p` は hook を読まず（`--setting-sources ""`）、`HC_TERMINAL_ID` を外して動かすので、自分自身を記録したり、再開用の記録を上書きしたりしない
 - 必要なもの: `jq`
 

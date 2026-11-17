@@ -162,7 +162,8 @@ export default class Timeline extends View {
     return box
       .child(h_flex().gap(6).text_size(10.5).font_weight(600).text_color(t.muted)
         .child("LAST REPORT")
-        .when(Boolean(report && !report.summarized && (report.text.length > 80)), (el) => el.child(div().font_weight(400).text_color(t.dim).child("要約中…")))
+        // 要約は返答から 2 秒ほどで届く。1 分たっても来なければ失敗とみなし、返答をそのまま出す。
+        .when(Boolean(report && !report.summarized && report.text.length > 80 && Date.now() / 1000 - report.t < 60), (el) => el.child(div().font_weight(400).text_color(t.dim).child("要約中…")))
         .child(div().flex_1())
         .when(Boolean(report), (el) => el.child(div().font_weight(400).text_color(t.dim).child(`${clock(new Date(report.t * 1000))} · ${ago(report.t)}`))))
       .when(Boolean(waiting), (el) => el.child(div().text_color(t.blocked).font_weight(500).whitespace_normal().child(`確認待ち: ${waiting.text}`)))
@@ -195,7 +196,8 @@ export default class Timeline extends View {
     const color = { you: t.ansi5, report: t.ansi3, task: t.done ?? t.ansi2, pr: t.accent, wait: t.blocked, start: t.dim }[e.kind] ?? t.dim;
     const filled = e.kind === "task" || e.kind === "wait";
     const label = { you: "あなた", report: "Report", pr: "PR", wait: "確認待ち" }[e.kind];
-    const key = `${e.t}-${i}-${e.kind}`;
+    // 開閉の鍵は記録そのものから作る（並びの位置は、新しい記録や絞り込みで変わる）。
+    const key = `${e.t}-${e.kind}-${e.id ?? e.text.slice(0, 40)}`;
     const open = this.open.has(key);
     const body = open && e.full ? e.full : e.text;
     return div().id(`e-${key}`).flex().gap(10).rounded(6).hover((s) => s.bg(t.hover))

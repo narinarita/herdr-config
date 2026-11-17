@@ -31,7 +31,9 @@ chmod +x "$claude_dir/hooks/herdr-timeline.sh"
 if command -v jq >/dev/null 2>&1; then
   settings="$claude_dir/settings.json"
   [ -f "$settings" ] || echo '{}' >"$settings"
-  cp "$settings" "$settings.bak-timeline"
+  # 実行のたびに日時付きで残す（同じ名前に上書きすると、2 回目以降は元の設定が消える）。
+  saved="$settings.bak-$(date +%Y%m%d-%H%M%S)"
+  cp "$settings" "$saved"
   jq '
     def add($event; $arg; $matcher):
       ("~/.claude/hooks/herdr-timeline.sh " + $arg) as $cmd
@@ -43,8 +45,9 @@ if command -v jq >/dev/null 2>&1; then
     | add("Stop"; "stop"; "")
     | add("Notification"; "notify"; "")
     | add("PostToolUse"; "tool"; "TodoWrite|TaskCreate|TaskUpdate|Bash")
-  ' "$settings.bak-timeline" >"$settings.tmp" && mv "$settings.tmp" "$settings"
-  echo "Registered the timeline hooks in $settings (previous copy: $settings.bak-timeline)"
+  ' "$saved" >"$settings.tmp" || { rm -f "$settings.tmp"; echo "Could not read $settings as JSON: the timeline hooks were not registered" >&2; exit 1; }
+  mv "$settings.tmp" "$settings"
+  echo "Registered the timeline hooks in $settings (previous copy: $saved)"
 else
   echo "jq is not installed: the timeline hooks were not registered" >&2
 fi
