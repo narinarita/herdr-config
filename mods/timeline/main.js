@@ -13,7 +13,8 @@
 //      ◐ 実際のやりとりで動作を確かめる          <- 進めている作業は背景を付ける
 //   ○ timeline mod を作り直す
 //
-// ツリーを書くのは hooks/timeline.sh（Claude Code の Stop hook。返答が終わるたびに Haiku が更新する）。
+// ツリーを書くのは hooks/timeline.sh（Claude Code の hook）。指示を送った時点（UserPromptSubmit）で目標と状態を直し、
+// 返答が終わるたび（Stop）に作業を分けて状態を更新する。どちらも Haiku が行う。
 // ~/.local/state/herdr-timeline/<terminal>.plan.json を読むだけで、この mod は何も書かない。
 // 項目は状態だけを持つ。全体の % は、末端の項目のうち終わったものの割合（進めている項目は 0 と数える）。
 
@@ -127,13 +128,14 @@ export default class Timeline extends View {
     const title = agent?.title?.replace(/^[^\p{L}\p{N}]+/u, "").trim() || agent?.tab_name || pane?.title || where.id;
     const status = agent?.status ?? pane?.status ?? null;
 
-    // 更新の印が 2 分を超えて残っていたら、更新が落ちたものとみなす（印は消えないので、描くたびに比べる）。
-    this.pending = Boolean(this.pendingAt) && Date.now() - this.pendingAt < 120000;
+    // 更新の印が 5 分を超えて残っていたら、更新が落ちたものとみなす（印は消えないので、描くたびに比べる）。
+    // hook 側はロック待ちが最大 3 分、Haiku の打ち切りが 2 分。
+    this.pending = Boolean(this.pendingAt) && Date.now() - this.pendingAt < 300000;
     root.child(this.header(t, title, status, space?.name, pane?.branch));
     if (!this.plan?.items.length) {
       return root.child(this.empty(t, !this.loaded ? "読み込み中…" : this.pending
         ? "作業ツリーを作っています…"
-        : "作業ツリーはまだありません。Claude が作業を1回終えると、ここにできます"));
+        : "作業ツリーはまだありません。Claude に作業を頼むと、ここにできます"));
     }
     return root.child(v_flex().id("plan").flex_1().min_h(0).px(12).pt(12).pb(14).gap(10).overflow_y_scrollbar()
       .child(this.goal(t, status))
