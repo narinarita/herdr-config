@@ -68,7 +68,7 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 - どの Space の Claude でも動くよう、hook はグローバルの `~/.claude/settings.json` に登録する。Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない
 - 書き先は `~/.local/state/herdr-timeline/<ターミナル ID>.plan.json`
 - 更新用の `claude -p` は hook を読まず（`--setting-sources ""`）、`HC_TERMINAL_ID` を外して動かすので、自分自身の返答でツリーを更新したり、再開用の記録を上書きしたりしない
-- 必要なもの: `jq`
+- 必要なもの: `jq` と、ログイン済みの Claude Code（「入れ方」の「必要なもの」）
 
 注意点:
 
@@ -133,7 +133,41 @@ cd herdr-config
 ./install.sh
 ```
 
-`install.sh` は `~/.config/herdr-app` にファイルをコピーします。上書きする前のファイルは `~/.config/herdr-app/.backup-<日時>/` に残します。そのあと Herdr でレイアウト `my-main` に切り替えます（`herdr-app do layout.switch '{"name":"my-main"}'`）。
+`install.sh` は `~/.config/herdr-app` にファイルをコピーします（`HERDR_APP_HOME` を設定していればその場所）。上書きする前のファイルは `~/.config/herdr-app/.backup-<日時>/` に残します。そのあと Herdr でレイアウト `my-main` に切り替えます（`herdr-app do layout.switch '{"name":"my-main"}'`）。
+
+### 必要なもの
+
+- Herdr（`herdr-app` と、付いてくる `hc`）
+- `jq`（`brew install jq`）。ないと timeline の hook を登録しない
+- Claude Code（`claude`）にログイン済みであること。timeline は作業ツリーを作るのに `claude -p --model haiku` を呼ぶ
+- フォント HackGen（下の「フォント」）
+
+### 入れると変わるもの
+
+`~/.config/herdr-app` のほかに、次のものを書き換えます。
+
+| 場所 | 変わること |
+| --- | --- |
+| `~/.config/herdr-app/settings.json` | 外観（dark）とフォントを、このリポジトリの設定で上書きする。前のファイルは `.backup-<日時>/` に残る |
+| `~/.claude/hooks/herdr-timeline.sh` | timeline の hook を置く |
+| `~/.claude/settings.json` | Claude Code の hook を 3 つ登録する（`SessionStart`・`UserPromptSubmit`・`Stop`）。どのプロジェクトの Claude にも効くが、Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない。書き換える前のファイルは `~/.claude/settings.json.bak-<日時>` に残る |
+| `~/.local/state/herdr-timeline/` | 作業ツリーの記録を置く |
+
+timeline の hook は、Herdr の中で Claude に指示を送るたび、返答が終わるたびに Haiku を 1 回ずつ呼びます。そのぶん Claude の使用量が増えます。
+
+### timeline の hook を外す
+
+`~/.claude/settings.json` から `herdr-timeline.sh` を含む hook を消し、hook 本体と記録を消します。
+
+```sh
+jq '.hooks |= (with_entries(.value |= map(select(any(.hooks[]?; .command | contains("herdr-timeline.sh")) | not)))
+               | with_entries(select(.value | length > 0)))' ~/.claude/settings.json > /tmp/s.json \
+  && cat /tmp/s.json > ~/.claude/settings.json && rm /tmp/s.json
+rm -f ~/.claude/hooks/herdr-timeline.sh
+rm -rf ~/.local/state/herdr-timeline
+```
+
+もう一度 `install.sh` を実行すると、また登録されます。
 
 ### フォント
 

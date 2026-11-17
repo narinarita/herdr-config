@@ -2,7 +2,8 @@
 # Copies this config into ~/.config/herdr-app, keeping the files it replaces.
 set -eu
 src=$(cd "$(dirname "$0")" && pwd)
-dst="${HERDR_HOME:-$HOME/.config/herdr-app}"
+# Herdr が読む場所。HERDR_APP_HOME で変えている人はそちらに入れる（HERDR_HOME は前の版の名前）。
+dst="${HERDR_APP_HOME:-${HERDR_HOME:-$HOME/.config/herdr-app}}"
 backup="$dst/.backup-$(date +%Y%m%d-%H%M%S)"
 
 for path in layouts/my-main.json mods/my-pane mods/claude-worktree mods/branch-tree mods/pomodoro mods/editor mods/my-files mods/my-tabs mods/timeline keys.json settings.json; do
