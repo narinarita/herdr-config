@@ -6,7 +6,7 @@
 
 | ファイル | 内容 |
 | --- | --- |
-| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files（`my-files`）/ Changes パネル、下のステータスバーの右端に `pomodoro` を置く |
+| `layouts/my-main.json` | Herdr (main) を元にしたレイアウト。左のサイドバーは `branch-tree`（Space → ブランチ → Agent のツリー）、右に Files（`my-files`）/ Changes / Timeline（`timeline`）パネル、上のタブの帯は `my-tabs`、下のステータスバーの右端に `pomodoro` を置く |
 | `mods/branch-tree/` | サイドバー。リポジトリの下に、本体のブランチ（ブランチのアイコン）と worktree（フォルダーのアイコン）を並べ、その下にそれぞれの Agent をぶら下げる（いなければ「Agent なし」）。本体の Space を閉じていても、リポジトリ名の見出しの下に worktree をまとめる。git でない Space は Agent を直下に置く。下端に状態ごとの Agent 数を出す。Herdr の `spaces` と `agents` の代わり |
 | `mods/my-pane/` | ペインのヘッダー（標準の `pane` mod 0.1.13 の複製） |
 | `mods/claude-worktree/` | 新しい git worktree とその space を作り、Claude Code を起動するダイアログ（Command + Shift + N） |
@@ -14,6 +14,9 @@
 | `mods/my-files/` | Files パネル（標準の `files` mod 0.1.15 の複製）。ファイルをクリックすると `editor` で開く |
 | `shell/e.zsh` | シェルの `e <ファイル>` で `editor` を開く関数。`~/.zshrc` で `source` する |
 | `mods/pomodoro/` | ステータスバーのポモドーロタイマー。全 space で共通の 1 つ |
+| `mods/my-tabs/` | タブの帯（標準の `tabs` mod 0.1.16 の複製）。右上の Files / Changes の横に Timeline の切り替えを足す |
+| `mods/timeline/` | 右パネルの Timeline。フォーカスしているターミナルの Claude の Last report と、これまでの出来事を新しい順に出す |
+| `hooks/timeline.sh` | Timeline の記録を書く Claude Code の hook。`install.sh` が `~/.claude/hooks/herdr-timeline.sh` に置き、`~/.claude/settings.json` に登録する |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く。`editor` の中では `cmd-s` で保存） |
 | `settings.json` | 外観とフォントの設定 |
 
@@ -44,6 +47,29 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 - ペインのヘッダーの × で閉じると、保存していない変更は消える（閉じる前に止める手段が Herdr にない）
 - ターミナルに出たパスを Command + クリックしたときは、今までどおり macOS の既定のアプリで開く
 - エディタは `shared("editor.panes")` にペインの対応を、`shared("editor.request")` に差し替えの依頼を置く
+
+### timeline でできること
+
+右上の Timeline を押すと、右パネルに、フォーカスしているターミナルで動いている Claude の記録を出します。
+
+- 上に Last report。Claude の最後の返答を、Haiku（`claude -p --model haiku`）で1〜2文に要約したもの。要約は返答のあとバックグラウンドで作るので、数秒は返答そのものを出す。80 字以下の返答は要約しない
+- 許可や質問で止まっている間は、Last report の上に「確認待ち」を赤で出す
+- その下に Timeline。あなたの指示、Report、タスクの変化（TodoWrite / TaskCreate / TaskUpdate）、PR の作成・マージ、確認待ち、セッションの開始を、日付ごとに新しい順に並べる。「すべて / Report / あなた / タスク」で絞り込める。行をクリックすると全文を出す
+- エディタなどターミナルでないペインに移っても、直前のターミナルの記録を出したままにする
+
+記録の仕組み:
+
+- `hooks/timeline.sh` を Claude Code の hook（SessionStart / UserPromptSubmit / Stop / Notification / PostToolUse）から呼ぶ。どの Space の Claude でも記録するため、登録先はグローバルの `~/.claude/settings.json`
+- Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない
+- 記録先は `~/.local/state/herdr-timeline/<ターミナル ID>.jsonl`。1 行 1 件で、600 件を超えたら後ろの 400 件だけ残す
+- 要約用の `claude -p` は hook を読まず（`--setting-sources ""`）、`HC_TERMINAL_ID` を外して動かすので、自分自身を記録したり、再開用の記録を上書きしたりしない
+- 必要なもの: `jq`
+
+注意点:
+
+- 返答のたびに Haiku を 1 回呼ぶので、そのぶん使用量が増える
+- 別のマシンの Space のターミナルの記録は出せない
+- 登録前から動いている Claude のセッションでは記録されないことがある。そのときは Claude を起動し直す
 
 ### pomodoro でできること
 
