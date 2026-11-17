@@ -23,7 +23,7 @@ if command -v herdr-app >/dev/null 2>&1; then
   herdr-app check "$dst/mods/my-tabs"
   herdr-app check "$dst/mods/timeline"
 fi
-# Timeline の記録: hook を ~/.claude/hooks に置き、~/.claude/settings.json に登録する（どの Space の Claude でも動くようにグローバル）。
+# Timeline の作業ツリー: hook を ~/.claude/hooks に置き、~/.claude/settings.json に登録する（どの Space の Claude でも動くようにグローバル）。
 claude_dir="$HOME/.claude"
 mkdir -p "$claude_dir/hooks"
 cp "$src/hooks/timeline.sh" "$claude_dir/hooks/herdr-timeline.sh"
@@ -31,23 +31,31 @@ chmod +x "$claude_dir/hooks/herdr-timeline.sh"
 if command -v jq >/dev/null 2>&1; then
   settings="$claude_dir/settings.json"
   [ -f "$settings" ] || echo '{}' >"$settings"
-  # 実行のたびに日時付きで残す（同じ名前に上書きすると、2 回目以降は元の設定が消える）。
-  saved="$settings.bak-$(date +%Y%m%d-%H%M%S)"
-  cp "$settings" "$saved"
+  # 使う hook（stop / start）を足し、前の版で登録した使わない hook（prompt / notify / tool）を外す。
   jq '
-    def add($event; $arg; $matcher):
+    def ours: (.command // "") | startswith("~/.claude/hooks/herdr-timeline.sh");
+    def wanted: (.command // "") as $c | ["~/.claude/hooks/herdr-timeline.sh stop", "~/.claude/hooks/herdr-timeline.sh start"] | index($c);
+    def add($event; $arg):
       ("~/.claude/hooks/herdr-timeline.sh " + $arg) as $cmd
       | if ([.hooks[$event][]?.hooks[]?.command] | index($cmd)) then .
-        else .hooks[$event] += [ {hooks: [{type: "command", command: $cmd}]} + (if $matcher == "" then {} else {matcher: $matcher} end) ]
-        end;
-    add("SessionStart"; "start"; "")
-    | add("UserPromptSubmit"; "prompt"; "")
-    | add("Stop"; "stop"; "")
-    | add("Notification"; "notify"; "")
-    | add("PostToolUse"; "tool"; "TodoWrite|TaskCreate|TaskUpdate|Bash")
-  ' "$saved" >"$settings.tmp" || { rm -f "$settings.tmp"; echo "Could not read $settings as JSON: the timeline hooks were not registered" >&2; exit 1; }
-  mv "$settings.tmp" "$settings"
-  echo "Registered the timeline hooks in $settings (previous copy: $saved)"
+        else .hooks[$event] += [ {hooks: [{type: "command", command: $cmd}]} ] end;
+    .hooks |= (with_entries(.value |= (map(.hooks |= map(select((ours | not) or wanted))) | map(select(.hooks | length > 0))))
+               | with_entries(select(.value | length > 0)))
+    | add("Stop"; "stop")
+    | add("SessionStart"; "start")
+  ' "$settings" >"$settings.tmp" || { rm -f "$settings.tmp"; echo "Could not read $settings as JSON: the timeline hooks were not registered" >&2; exit 1; }
+  jq -S . "$settings" >"$settings.a" && jq -S . "$settings.tmp" >"$settings.b"
+  if cmp -s "$settings.a" "$settings.b"; then
+    rm -f "$settings.tmp" "$settings.a" "$settings.b"
+    echo "The timeline hooks are already registered in $settings"
+  else
+    rm -f "$settings.a" "$settings.b"
+    # 書き換えるときだけ、日時付きで元を残す。
+    saved="$settings.bak-$(date +%Y%m%d-%H%M%S)"
+    cp "$settings" "$saved"
+    mv "$settings.tmp" "$settings"
+    echo "Registered the timeline hooks in $settings (previous copy: $saved)"
+  fi
 else
   echo "jq is not installed: the timeline hooks were not registered" >&2
 fi

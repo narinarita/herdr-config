@@ -15,8 +15,8 @@
 | `shell/e.zsh` | シェルの `e <ファイル>` で `editor` を開く関数。`~/.zshrc` で `source` する |
 | `mods/pomodoro/` | ステータスバーのポモドーロタイマー。全 space で共通の 1 つ |
 | `mods/my-tabs/` | タブの帯（標準の `tabs` mod 0.1.16 の複製）。右上の Files / Changes の横に Timeline の切り替えを足す |
-| `mods/timeline/` | 右パネルの Timeline。フォーカスしているターミナルの Claude の Last report と、これまでの出来事を新しい順に出す |
-| `hooks/timeline.sh` | Timeline の記録を書く Claude Code の hook。`install.sh` が `~/.claude/hooks/herdr-timeline.sh` に置き、`~/.claude/settings.json` に登録する |
+| `mods/timeline/` | 右パネルの Timeline。フォーカスしているターミナルの Claude の目標と作業ツリーを出す |
+| `hooks/timeline.sh` | 作業ツリーを書く Claude Code の hook（Stop / SessionStart）。`install.sh` が `~/.claude/hooks/herdr-timeline.sh` に置き、`~/.claude/settings.json` に登録する |
 | `keys.json` | macOS 向けの `cmd-*` キー割り当て（`cmd-shift-n` で `claude-worktree` を開く。`editor` の中では `cmd-s` で保存） |
 | `settings.json` | 外観とフォントの設定 |
 
@@ -50,27 +50,29 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 
 ### timeline でできること
 
-右上の Timeline を押すと、右パネルに、フォーカスしているターミナルで動いている Claude の記録を出します。
+右上の Timeline を押すと、右パネルに、フォーカスしているターミナルで動いている Claude の作業を、目標と作業ツリーで出します。
 
-- 上に Last report。Claude の最後の返答を、Haiku（`claude -p --model haiku`）で1〜2文に要約したもの。要約は返答のあとバックグラウンドで作るので、数秒は返答そのものを出す。80 字以下の返答は要約しない
-- 許可や質問で止まっている間は、Last report の上に「確認待ち」を赤で出す。60 秒放置の「入力を待っています」という通知は記録しない
-- 要約が 1 分たっても届かなければ（失敗したとき）、返答をそのまま出す
-- その下に Timeline。あなたの指示、Report、タスクの変化（TodoWrite / TaskCreate / TaskUpdate）、PR の作成・マージ、確認待ち、セッションの開始を、日付ごとに新しい順に並べる。「すべて / Report / あなた / タスク」で絞り込める。行をクリックすると全文を出す
-- エディタなどターミナルでないペインに移っても、直前のターミナルの記録を出したままにする
+- 上に目標と全体の進み具合（終わった件数 / 全件数、始めてからの時間、%）
+- その下に作業ツリー。入れ子は2段まで。項目ごとに状態（● 終わった、◐ 進めている・返事待ち、○ まだ）だけを出し、進めている項目には背景を付ける
+- エディタなどターミナルでないペインに移っても、直前のターミナルの作業ツリーを出したままにする
 
-記録の仕組み:
+作業ツリーの作り方:
 
-- `hooks/timeline.sh` を Claude Code の hook（SessionStart / UserPromptSubmit / Stop / Notification / PostToolUse）から呼ぶ。どの Space の Claude でも記録するため、登録先はグローバルの `~/.claude/settings.json`
-- Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない
-- 記録先は `~/.local/state/herdr-timeline/<ターミナル ID>.jsonl`。1 行 1 件で、600 件を超えたら後ろの 400 件だけ残す。本文は Report が 4000 字、ほかは 400 字まで
-- 要約用の `claude -p` は hook を読まず（`--setting-sources ""`）、`HC_TERMINAL_ID` を外して動かすので、自分自身を記録したり、再開用の記録を上書きしたりしない
+- Claude が返答を終えるたびに、`hooks/timeline.sh`（Stop hook）が今回のやりとり（指示・返答・使った操作）と今のツリーを Haiku（`claude -p --model haiku`）に渡し、更新したツリーを書く。同じ目標の続きなら項目は変えずに状態だけ直し、別の目標なら作り直す。質問に答えただけのときは変えない
+- 項目は状態だけを持つ（% を持たない）ので、作業の区切りごとの更新で、実際の作業とのずれが小さい
+- 更新は 2〜5 秒かかるので、バックグラウンドで動かし、その間はパネルに「更新中…」を出す
+- `/clear` で始めたときは、前の作業のツリーを消す
+- どの Space の Claude でも動くよう、hook はグローバルの `~/.claude/settings.json` に登録する。Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない
+- 書き先は `~/.local/state/herdr-timeline/<ターミナル ID>.plan.json`
+- 更新用の `claude -p` は hook を読まず（`--setting-sources ""`）、`HC_TERMINAL_ID` を外して動かすので、自分自身の返答でツリーを更新したり、再開用の記録を上書きしたりしない
 - 必要なもの: `jq`
 
 注意点:
 
-- 返答のたびに Haiku を 1 回呼ぶので、そのぶん使用量が増える
-- 別のマシンの Space のターミナルの記録は出せない
-- 登録前から動いている Claude のセッションでは記録されないことがある。そのときは Claude を起動し直す
+- Claude が返答を終えるたびに Haiku を 1 回呼ぶので、そのぶん使用量が増える
+- ツリーは Haiku の解釈なので、項目の切り方や状態が実際とずれることがある
+- 別のマシンの Space のターミナルの作業ツリーは出せない
+- 登録前から動いている Claude のセッションでは更新されないことがある。そのときは Claude を起動し直す
 
 ### pomodoro でできること
 

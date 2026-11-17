@@ -1,72 +1,70 @@
-// 右パネルの Timeline。フォーカスしているターミナルの Claude が何をしてきたかを、新しい順に並べる。
+// 右パネルの Timeline。フォーカスしているターミナルの Claude の作業を、目標と作業ツリーで出す。
 //
 //   [◌] herdr appでのツイート内容再現        作業中
-//       herdr-config / wip/1115-1407
-//   ┃ LAST REPORT                        20:43
-//   ┃ 右パネルに Timeline を足した。次は…        <- 最後の返答の要約（Haiku）。要約前は返答そのもの
-//   TIMELINE  すべて  Report  あなた  タスク
-//   今日
-//   ● 20:41  テストを通す → done
-//   ○ 20:38  あなた  タイムラインを組み込みたい
+//       timeline-panel
+//   ┌───────────────────────────────────────┐
+//   │ 作業ツリーを区切りごとに更新する   進行中 │   <- 目標
+//   │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━── │
+//   │ 4/6 件 · 38 分              66.7%     │
+//   └───────────────────────────────────────┘
+//   ● 作業ツリーの % 表示をなくす
+//   ◐ Stop hook で作業ツリーを更新する
+//      ● hooks/timeline.sh を書き直す
+//      ◐ 実際のやりとりで動作を確かめる          <- 進めている作業は背景を付ける
+//   ○ timeline mod を作り直す
 //
-// 記録するのは hooks/timeline.sh（Claude Code の hook）。ターミナルごとに
-// ~/.local/state/herdr-timeline/<terminal>.jsonl へ 1 行 1 件で書く。
-// この mod はそのファイルを読むだけで、何も書かない。
+// ツリーを書くのは hooks/timeline.sh（Claude Code の Stop hook。返答が終わるたびに Haiku が更新する）。
+// ~/.local/state/herdr-timeline/<terminal>.plan.json を読むだけで、この mod は何も書かない。
+// 項目は状態だけを持つ。全体の % は、末端の項目のうち終わったものの割合（進めている項目は 0 と数える）。
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { home, focused, panes, agents, spaces, readTextFile, watchFolder, theme, checking } from "herdr";
 
 const DIR = () => `${home()}/.local/state/herdr-timeline`;
-const MAX = 200;   // 表示する件数の上限
-const FILTERS = [["all", "すべて"], ["report", "Report"], ["you", "あなた"], ["task", "タスク"]];
 const STATE = { working: "作業中", blocked: "あなた待ち", done: "完了", idle: "待機" };
+const ICON = { done: "●", doing: "◐", todo: "○" };
 
 // 今見ているターミナル。別のマシンのものはファイルが手元にないので扱わない。
 function current() {
   const f = focused();
   const id = f?.shown ?? f?.terminal ?? f?.agent ?? null;
   if (!id) return { id: null };
-  if (id.includes("/")) return { id, remote: true };
-  return { id };
+  return id.includes("/") ? { id, remote: true } : { id };
 }
 
+const STATES = new Set(["done", "doing", "todo"]);
 function parse(text) {
-  const events = [], summaries = new Map();
-  for (const line of (text ?? "").split("\n")) {
-    if (!line.trim()) continue;
-    let e;
-    try { e = JSON.parse(line); } catch { continue; }
-    if (!e || typeof e.t !== "number" || typeof e.text !== "string") continue;
-    if (e.kind === "summary") { if (e.id) summaries.set(e.id, e.text); continue; }
-    events.push(e);
-  }
-  for (const e of events) if (e.kind === "report" && summaries.has(e.id)) { e.full = e.text; e.text = summaries.get(e.id); e.summarized = true; }
-  return events.slice(-MAX).reverse();
+  let p;
+  try { p = JSON.parse(text ?? ""); } catch { return null; }
+  if (!p || typeof p !== "object" || !Array.isArray(p.items)) return null;
+  const item = (x) => ({
+    title: String(x?.title ?? ""),
+    state: STATES.has(x?.state) ? x.state : "todo",
+    children: Array.isArray(x?.children) ? x.children.map(item) : [],
+  });
+  return { goal: String(p.goal ?? ""), started: Number(p.started) || null, updated: Number(p.updated) || null, items: p.items.map(item) };
 }
 
-const pad = (n) => String(n).padStart(2, "0");
-const clock = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
-function day(t) {
-  const d = new Date(t * 1000), now = new Date();
-  const start = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diff = Math.round((start(now) - start(d)) / 86400000);
-  return diff === 0 ? "今日" : diff === 1 ? "昨日" : `${d.getMonth() + 1}/${d.getDate()}`;
+// 子を持つ項目の状態は子から決める。
+function stateOf(it) {
+  if (!it.children.length) return it.state;
+  const s = it.children.map(stateOf);
+  return s.every((x) => x === "done") ? "done" : s.some((x) => x !== "todo") ? "doing" : "todo";
 }
-function ago(t) {
-  const m = Math.floor((Date.now() / 1000 - t) / 60);
-  if (m < 1) return "たった今";
-  if (m < 60) return `${m} 分前`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h} 時間前` : `${Math.floor(h / 24)} 日前`;
+const leaves = (items) => items.flatMap((it) => it.children.length ? leaves(it.children) : [it]);
+
+function minutes(from) {
+  const m = Math.max(0, Math.floor((Date.now() / 1000 - from) / 60));
+  return m < 60 ? `${m} 分` : `${Math.floor(m / 60)} 時間 ${m % 60} 分`;
 }
 
 export default class Timeline extends View {
   init(_props, cx) {
-    this.key = null; this.events = []; this.filter = "all"; this.open = new Set(); this.loaded = false;
+    this.key = null; this.plan = null; this.pending = false; this.loaded = false;
     if (checking()) return;
     this.watch(cx);
-    // 「〜分前」を進める時計。見張りが止まっていたら（フォルダーがまだない等）ここで読み直し、見張り直す。
+    // 経過時間を進める時計。見張りが止まっていたら（フォルダーがまだない等）ここで読み直し、見張り直す。
     cx.timer.every(30000, (cx) => {
       if (!this.watching) { if (this.key) this.load(this.key, cx); this.watch(cx); }
       cx.notify();
@@ -79,8 +77,8 @@ export default class Timeline extends View {
     cx.spawn(async (cx) => {
       try {
         while (!this.closed) {
-          this.pending = watchFolder(DIR());
-          await this.pending;
+          this.waiting = watchFolder(DIR());
+          await this.waiting;
           if (this.key && !this.closed) this.load(this.key, cx);
         }
       } catch {}
@@ -90,15 +88,20 @@ export default class Timeline extends View {
 
   async close() {
     this.closed = true;
-    this.pending?.cancel();
+    this.waiting?.cancel();
   }
 
   load(id, cx) {
     cx.spawn(async (cx) => {
-      let text = null;
-      try { text = await readTextFile(`${DIR()}/${id.replaceAll("/", "_")}.jsonl`); } catch {}
+      const base = `${DIR()}/${id.replaceAll("/", "_")}`;
+      let text = null, mark = null;
+      try { text = await readTextFile(`${base}.plan.json`); } catch {}
+      try { mark = await readTextFile(`${base}.plan.pending`); } catch {}
       if (this.key !== id) return;
-      this.events = parse(text); this.loaded = true;
+      this.plan = parse(text);
+      // 更新の印が 2 分を超えて残っていたら、更新が落ちたものとみなす。
+      this.pending = Boolean(mark) && Date.now() / 1000 - Number(mark) < 120;
+      this.loaded = true;
       cx.notify();
     });
   }
@@ -109,13 +112,13 @@ export default class Timeline extends View {
     const now = current();
     const where = now.id || !this.key ? now : { id: this.key, remote: this.key.includes("/") };
     if (where.id !== this.key) {
-      this.key = where.id; this.events = []; this.loaded = false; this.open = new Set();
+      this.key = where.id; this.plan = null; this.pending = false; this.loaded = false;
       if (where.id && !where.remote && !checking()) this.load(where.id, cx);
     }
     const root = v_flex().id("timeline").size_full().min_h(0).rounded(10).overflow_hidden()
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(13);
-    if (!where.id) return root.child(this.empty(t, "ターミナルを選ぶと、そこで動いている Claude の記録が出ます"));
-    if (where.remote) return root.child(this.empty(t, "別のマシンのターミナルの記録は、まだ表示できません"));
+    if (!where.id) return root.child(this.empty(t, "ターミナルを選ぶと、そこで動いている Claude の作業ツリーが出ます"));
+    if (where.remote) return root.child(this.empty(t, "別のマシンのターミナルの作業ツリーは、まだ表示できません"));
 
     const pane = panes().find((p) => p.terminal === where.id);
     const agent = agents().find((a) => a.address === where.id || a.pane === pane?.pane);
@@ -123,12 +126,15 @@ export default class Timeline extends View {
     const title = agent?.title?.replace(/^[^\p{L}\p{N}]+/u, "").trim() || agent?.tab_name || pane?.title || where.id;
     const status = agent?.status ?? pane?.status ?? null;
 
-    return root
-      .child(this.header(t, title, status, space?.name, pane?.branch))
-      .when(this.events.length > 0, (el) => el.child(this.lastReport(t, status)).child(this.list(t)))
-      .when(this.events.length === 0, (el) => el.child(this.empty(t, this.loaded
-        ? "まだ記録がありません。Claude Code に指示を送ると、ここに並びます"
-        : "読み込み中…")));
+    root.child(this.header(t, title, status, space?.name, pane?.branch));
+    if (!this.plan?.items.length) {
+      return root.child(this.empty(t, !this.loaded ? "読み込み中…" : this.pending
+        ? "作業ツリーを作っています…"
+        : "作業ツリーはまだありません。Claude が作業を1回終えると、ここにできます"));
+    }
+    return root.child(v_flex().id("plan").flex_1().min_h(0).px(12).pt(12).pb(14).gap(10).overflow_y_scrollbar()
+      .child(this.goal(t, status))
+      .child(v_flex().gap(1).children(this.plan.items.flatMap((it) => this.rows(t, it, 0)))));
   }
 
   empty(t, text) {
@@ -151,64 +157,35 @@ export default class Timeline extends View {
         .child(!branch ? spaceName : spaceName === branch.replaceAll("/", "-") ? branch : `${spaceName} / ${branch}`)));
   }
 
-  lastReport(t, status) {
-    const report = this.events.find((e) => e.kind === "report");
-    // 許可や質問で止まっている間（Herdr が blocked と言っている間）だけ、最後の確認待ちを先に出す。
-    // 承認したあとは記録が残っていても出さない。
-    const latest = this.events[0];
-    const waiting = status === "blocked" && latest?.kind === "wait" ? latest : null;
-    const box = v_flex().mx(12).mt(12).px(12).py(9).gap(4).rounded(8).bg(t.raised).border_l(3).border_color(waiting ? t.blocked : t.accent);
-    if (!report && !waiting) return box.child(div().text_color(t.dim).text_size(12.5).child("まだ返答がありません"));
-    return box
-      .child(h_flex().gap(6).text_size(10.5).font_weight(600).text_color(t.muted)
-        .child("LAST REPORT")
-        // 要約は返答から 2 秒ほどで届く。1 分たっても来なければ失敗とみなし、返答をそのまま出す。
-        .when(Boolean(report && !report.summarized && report.text.length > 80 && Date.now() / 1000 - report.t < 60), (el) => el.child(div().font_weight(400).text_color(t.dim).child("要約中…")))
+  goal(t, status) {
+    const all = leaves(this.plan.items), done = all.filter((x) => x.state === "done").length;
+    const pct = all.length ? (done / all.length) * 100 : 0;
+    const finished = all.length > 0 && done === all.length;
+    const chip = finished ? ["完了", t.done] : status === "blocked" ? ["あなた待ち", t.blocked] : ["進行中", t.working];
+    return v_flex().px(12).py(10).gap(7).rounded(8).bg(t.raised)
+      .child(h_flex().gap(8).items_start()
+        .child(div().flex_1().min_w(0).whitespace_normal().font_weight(600).child(this.plan.goal || "（目標なし）"))
+        .child(div().flex_none().text_size(11).px(7).rounded(9).border_1().border_color(chip[1]).text_color(chip[1]).child(chip[0])))
+      .child(div().h(4).w_full().rounded(2).bg(t.border).overflow_hidden()
+        .child(div().h_full().rounded(2).bg(t.done).w(`${pct}%`)))
+      .child(h_flex().gap(6).text_size(11.5).text_color(t.muted)
+        .child(`${done}/${all.length} 件`)
+        .when(Boolean(this.plan.started), (el) => el.child(`· ${minutes(this.plan.started)}`))
+        .when(this.pending, (el) => el.child(div().text_color(t.dim).child("· 更新中…")))
         .child(div().flex_1())
-        .when(Boolean(report), (el) => el.child(div().font_weight(400).text_color(t.dim).child(`${clock(new Date(report.t * 1000))} · ${ago(report.t)}`))))
-      .when(Boolean(waiting), (el) => el.child(div().text_color(t.blocked).font_weight(500).whitespace_normal().child(`確認待ち: ${waiting.text}`)))
-      .when(Boolean(report), (el) => el.child(div().whitespace_normal().child(report.text.length > 300 ? `${report.text.slice(0, 300)}…` : report.text)));
+        .child(`${pct.toFixed(1)}%`));
   }
 
-  list(t) {
-    const shown = this.events.filter((e) => this.filter === "all" || e.kind === this.filter
-      || (this.filter === "you" && e.kind === "wait") || (this.filter === "task" && e.kind === "pr"));
-    const rows = [];
-    let lastDay = null;
-    shown.forEach((e, i) => {
-      const d = day(e.t);
-      if (d !== lastDay) { rows.push(div().pl(22).pt(i ? 10 : 2).pb(4).text_size(11).text_color(t.dim).child(d)); lastDay = d; }
-      rows.push(this.row(t, e, i, i === shown.length - 1 || day(shown[i + 1].t) !== d));
-    });
-    return v_flex().flex_1().min_h(0).pt(14)
-      .child(h_flex().px(14).pb(8).gap(6).items_center().flex_wrap()
-        .child(div().mr(4).text_size(10.5).font_weight(600).text_color(t.muted).child("TIMELINE"))
-        .children(FILTERS.map(([k, label]) => div().id(`f-${k}`).px(8).rounded(9).text_size(11.5)
-          .bg(this.filter === k ? t.selected : t.background).text_color(this.filter === k ? t.foreground : t.muted)
-          .hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => { this.filter = k; cx.notify(); })
-          .child(label))))
-      .child(v_flex().id("events").flex_1().min_h(0).px(14).pb(14).overflow_y_scrollbar()
-        .children(rows.length ? rows : [div().pl(22).pt(8).text_color(t.dim).child("該当する記録はありません")]));
-  }
-
-  row(t, e, i, last) {
-    const color = { you: t.ansi5, report: t.ansi3, task: t.done ?? t.ansi2, pr: t.accent, wait: t.blocked, start: t.dim }[e.kind] ?? t.dim;
-    const filled = e.kind === "task" || e.kind === "wait";
-    const label = { you: "あなた", report: "Report", pr: "PR", wait: "確認待ち" }[e.kind];
-    // 開閉の鍵は記録そのものから作る（並びの位置は、新しい記録や絞り込みで変わる）。
-    const key = `${e.t}-${e.kind}-${e.id ?? e.text.slice(0, 40)}`;
-    const open = this.open.has(key);
-    const body = open && e.full ? e.full : e.text;
-    return div().id(`e-${key}`).flex().gap(10).rounded(6).hover((s) => s.bg(t.hover))
-      .on_click((_ev, cx) => { this.open.has(key) ? this.open.delete(key) : this.open.add(key); cx.notify(); })
-      // 印と、次の印までの縦線
-      .child(v_flex().w(12).flex_none().items_center().pt(5)
-        .child(div().size(10).flex_none().rounded(5).border_2().border_color(color).bg(filled ? color : t.background))
-        .when(!last, (el) => el.child(div().w(1).flex_1().mt(2).bg(t.border))))
-      .child(div().w(36).flex_none().py(2).text_size(12).text_color(t.dim).child(clock(new Date(e.t * 1000))))
-      .child(h_flex().flex_1().min_w(0).py(2).pr(4).gap(5).items_start()
-        .when(Boolean(label), (el) => el.child(div().flex_none().text_color(t.muted).child(label)))
-        .child(div().flex_1().min_w(0).when(open, (el) => el.whitespace_normal()).when(!open, (el) => el.truncate()).child(body)));
+  rows(t, it, depth) {
+    const s = stateOf(it), leaf = !it.children.length;
+    const color = { done: t.done, doing: t.working, todo: t.dim }[s];
+    const row = h_flex().gap(8).items_start().py(3).pr(6).pl(6 + depth * 18).rounded(5)
+      .when(leaf && s === "doing", (el) => el.bg(t.raised))
+      .child(div().w(12).flex_none().text_size(11).text_color(color).child(ICON[s]))
+      .child(div().flex_1().min_w(0).whitespace_normal()
+        .text_color(s === "done" ? t.muted : t.foreground)
+        .when(!leaf || s === "doing", (el) => el.font_weight(500))
+        .child(it.title));
+    return [row, ...it.children.flatMap((c) => this.rows(t, c, depth + 1))];
   }
 }
