@@ -11,10 +11,20 @@
 // the separate `agents` list). A space's + starts a terminal or an agent in that space;
 // its chevron folds its agents away (folded, it shows how many and the most urgent
 // state). Click to switch, right-click for its menu, drag to reorder.
+//
+// Above that line, Claude Code's usage as two thin bars (5 時間枠と週の上限):
+//
+//   h            ━━━━━━━━━━──────  61%
+//   1:10 (水)
+//   w            ━━━━━━━──────────  48%
+//   23:00 (水)
+//
+// hooks/usage.sh (in the statusline) writes ~/.local/state/herdr-usage/limits.json;
+// this only reads it. Yellow from 80%, red at 100% (its reset time turns red too).
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { home, focused, spaces, machines, panes, run, openOverlay, closeOverlay, props, exec, hc, theme, shared, setShared, watchFolder, window, layout, agents, terminals, setAgentOrder, knownAgents } from "herdr";
+import { home, focused, spaces, machines, panes, run, openOverlay, closeOverlay, props, exec, hc, theme, shared, setShared, watchFolder, readTextFile, window, layout, agents, terminals, setAgentOrder, knownAgents } from "herdr";
 
 // --- agents (from the `agents` mod) ---
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
@@ -107,6 +117,28 @@ export function tone(t, status) {
   return t[status] ?? t.unknown;
 }
 
+// --- Claude Code の使用量 ---
+const USAGE_DIR = () => `${home()}/.local/state/herdr-usage`;
+const WINDOWS = [["five_hour", "h", "5 時間枠"], ["seven_day", "w", "週"]];
+function parseUsage(text) {
+  let u;
+  try { u = JSON.parse(text ?? ""); } catch { return null; }
+  if (!u || typeof u !== "object") return null;
+  const win = (w) => w && typeof w.pct === "number" ? { pct: w.pct, resets: Number(w.resets) || null } : null;
+  return { five_hour: win(u.five_hour), seven_day: win(u.seven_day) };
+}
+const clockOf = (d) => `${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}`;
+// 1:10 (水)
+function resetAt(sec) {
+  const d = new Date(sec * 1000);
+  return `${clockOf(d)} (${"日月火水木金土"[d.getDay()]})`;
+}
+function untilText(ms) {
+  const m = Math.max(0, Math.ceil(ms / 60000));
+  if (m >= 1440) return `${Math.floor(m / 1440)} 日 ${Math.floor((m % 1440) / 60)} 時間`;
+  return m >= 60 ? `${Math.floor(m / 60)} 時間 ${m % 60} 分` : `${m} 分`;
+}
+
 export default class SpaceTree extends View {
   init(_props, cx) {
     if (props()?.launch) return this.initLauncher(cx);
@@ -115,7 +147,14 @@ export default class SpaceTree extends View {
     this.hoverSpace = null;
     this.dragAgent = null; // the agent row being dragged (its tab moves)
     this.overAgent = null;
-    cx.timer.every(30000, (cx) => cx.notify());
+    cx.timer.every(30000, (cx) => {
+      // 使用量のフォルダーがまだなかった等で見張りが止まっていたら、読み直して見張り直す。
+      if (!this.usageWatching) { this.loadUsage(cx); this.watchUsage(cx); }
+      cx.notify();
+    });
+    this.usage = null;
+    this.loadUsage(cx);
+    this.watchUsage(cx);
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -312,6 +351,57 @@ export default class SpaceTree extends View {
         }
       } catch { this.watching.delete(repo); }
     });
+  }
+
+  // hooks/usage.sh が書いた使用量を読む。読めなければ前の値のまま。
+  loadUsage(cx) {
+    cx.spawn(async (cx) => {
+      let text = null;
+      try { text = await readTextFile(`${USAGE_DIR()}/limits.json`); } catch { return; }
+      const u = parseUsage(text);
+      if (u) { this.usage = u; cx.notify(); }
+    });
+  }
+
+  watchUsage(cx) {
+    this.usageWatching = true;
+    cx.spawn(async (cx) => {
+      try {
+        while (true) {
+          await watchFolder(USAGE_DIR());
+          this.loadUsage(cx);
+        }
+      } catch {}
+      this.usageWatching = false;
+    });
+  }
+
+  // サイドバーの下端の 2 本のバー。左に h / w とリセット時刻、右にバーと %。
+  // まだ一度も取れていなければ出さない。
+  usageView(t) {
+    const u = this.usage;
+    if (!u) return null;
+    const now = Date.now();
+    const red = t.ansi1, yellow = t.blocked;
+    const rows = WINDOWS.map(([key, label, name]) => {
+      const w = u[key];
+      if (!w) return null;
+      // リセット時刻を過ぎた値は古い（statusline は Claude が動いている間しか呼ばれない）。
+      const stale = w.resets && w.resets * 1000 <= now;
+      const pct = stale ? 0 : Math.max(0, Math.min(100, Math.round(w.pct)));
+      const color = pct >= 100 ? red : pct >= 80 ? yellow : t.done;
+      const known = w.resets && !stale;
+      const tip = known ? `${name}: ${resetAt(w.resets)} にリセット（あと ${untilText(w.resets * 1000 - now)}）` : name;
+      return h_flex().id(`usage-${key}`).gap(8).items_center().tooltip(tip)
+        .child(v_flex().w(64).flex_none()
+          .child(div().text_size(11.5).font_weight(500).text_color(t.foreground).child(label))
+          .child(div().text_size(10.5).text_color(pct >= 100 ? red : t.dim).child(known ? resetAt(w.resets) : "—")))
+        .child(div().flex_1().min_w(0).h(4).rounded(2).bg(t.border).overflow_hidden()
+          .child(div().h_full().rounded(2).bg(color).w(`${pct}%`)))
+        .child(h_flex().w(32).flex_none().justify_end().text_size(10.5).text_color(pct >= 80 ? color : t.muted).child(`${pct}%`));
+    }).filter(Boolean);
+    if (!rows.length) return null;
+    return v_flex().flex_none().px(16).pt(10).pb(9).gap(9).border_t(1).border_color(t.border).children(rows);
   }
 
   // --- the + launcher: a popup copy of this mod with props {launch: spaceId} ---
@@ -819,6 +909,7 @@ export default class SpaceTree extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
+    const usage = collapsed ? null : this.usageView(t);
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
@@ -827,6 +918,7 @@ export default class SpaceTree extends View {
       .child(v_flex().flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().mode("always")
         .on_mouse_up("left", (_e, cx) => { this.pressed = null; this.dragAgent = null; this.overAgent = null; cx.notify(); })
         .children(this.grouped(t, collapsed)))
+      .when(Boolean(usage), (el) => el.child(usage))
       .when(!collapsed, (el) => el.child(this.summary(t, list)));
   }
 }
