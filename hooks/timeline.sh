@@ -11,7 +11,7 @@
 #
 # 書き先: ~/.local/state/herdr-timeline/<terminal>.plan.json
 #   {"goal": "...", "started": 秒, "updated": 秒, "turn": ミリ秒,
-#    "items": [{"title": "...", "state": "done|doing|todo", "children": [...]}]}
+#    "items": [{"title": "...", "state": "done|doing|waiting|todo", "children": [...]}]}
 # 新しいセッションで空にしたときは "cleared" にその時刻を置き、それより前に始まった更新は書かない。
 # 更新中は <terminal>.plan.pending に、その更新の turn を置く（mod が「更新中…」を出す）。
 # 作業ツリーの各項目は状態だけを持つ（% は持たない）ので、作業の区切りごとの更新で十分。
@@ -57,10 +57,10 @@ SCHEMA='{
       "type": "object",
       "properties": {
         "title": {"type": "string"},
-        "state": {"enum": ["done", "doing", "todo"]},
+        "state": {"enum": ["done", "doing", "waiting", "todo"]},
         "children": {"type": "array", "items": {
           "type": "object",
-          "properties": {"title": {"type": "string"}, "state": {"enum": ["done", "doing", "todo"]}},
+          "properties": {"title": {"type": "string"}, "state": {"enum": ["done", "doing", "waiting", "todo"]}},
           "required": ["title", "state"]
         }}
       },
@@ -75,7 +75,8 @@ PROMPT='あなたは、AI エージェントの作業を作業ツリーとして
 次の規則で、更新した作業ツリーを返してください。
 - goal: ユーザーが達成したいことを日本語1文で（40字以内）。
 - items: 作業の一覧。入れ子は2段まで（children）。末端の項目は全部で12個まで。title は日本語で25字以内。
-- state: done は終わった作業。doing は今進めている作業と、ユーザーの判断や返事を待っている作業。todo はまだ手を付けていない作業。
+- state: done は終わった作業。doing は今進めている作業。waiting は、エージェントがユーザーに質問・確認・判断を求めて、その返事を待っている作業（返答の最後でユーザーに聞いているなら、その項目を waiting にする）。todo はまだ手を付けていない作業。
+- 今のツリーで waiting の項目は、今回ユーザーが指示を送った（返事をした）ので、done にする。
 - 今のツリーがあり、今回の指示が同じ目標の続きなら、new_goal は false。既存の項目の title と順番は変えず、state だけ直し、新しく出てきた作業を足す。
 - ただし、子のない項目の作業が今回いくつかに分かれて進んだなら、その項目の children に分けて入れる（項目の title は変えない）。指示の時点で足した大まかな項目は、こうして分ける。
 - 足すと末端が12個を超えるときは、子が全部 done の親項目から順に、子を消して親1行（done）にまとめて数を減らす。
@@ -87,6 +88,7 @@ PROMPT_START='あなたは、AI エージェントの作業を作業ツリーと
 標準入力には「今の作業ツリー」（JSON。まだなければ null か、items が空）と、ユーザーが今送った「指示」があります。エージェントはまだ作業を始めていません。
 次のことだけをして、作業ツリーを返してください。作業を細かく分けたり、推測で項目を足したりしないでください（細かく分けるのは、エージェントが作業を終えた後の別の更新で行います）。
 - 今のツリーがない（null か items が空）ときは、別の目標のときと同じにする。
+- 今のツリーで waiting の項目は、ユーザーが返事をしたので done にする（目標の続きのときも、別の目標のときも）。
 - 指示が今の目標の続きなら、new_goal は false。goal と既存の項目の title・順番は変えない。指示にあたる項目があれば、その state を doing にする（子のある項目なら、あたる子を doing に）。なければ、指示を表す項目を1つ（25字以内、state は doing）末尾に足す。
 - 指示が別の目標なら、new_goal を true にし、goal を指示から日本語1文（40字以内）で書き、items は指示を表す項目1つ（state は doing）だけにする。
 - 指示が質問や雑談だけで作業を頼んでいないなら、changed を false にして、今のツリーをそのまま返す。それ以外は changed を true。'

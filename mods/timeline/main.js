@@ -24,7 +24,7 @@ import { home, focused, panes, agents, spaces, readTextFile, watchFolder, theme,
 
 const DIR = () => `${home()}/.local/state/herdr-timeline`;
 const STATE = { working: "作業中", blocked: "あなた待ち", done: "完了", idle: "待機" };
-const ICON = { done: "●", doing: "◐", todo: "○" };
+const ICON = { done: "●", doing: "◐", waiting: "◇", todo: "○" };
 
 // 今見ているターミナル。別のマシンのものはファイルが手元にないので扱わない。
 function current() {
@@ -34,7 +34,7 @@ function current() {
   return id.includes("/") ? { id, remote: true } : { id };
 }
 
-const STATES = new Set(["done", "doing", "todo"]);
+const STATES = new Set(["done", "doing", "waiting", "todo"]);
 function parse(text) {
   let p;
   try { p = JSON.parse(text ?? ""); } catch { return null; }
@@ -47,11 +47,12 @@ function parse(text) {
   return { goal: String(p.goal ?? ""), started: Number(p.started) || null, updated: Number(p.updated) || null, items: p.items.map(item) };
 }
 
-// 子を持つ項目の状態は子から決める。
+// 子を持つ項目の状態は子から決める。返事待ちの子があれば返事待ち、次に進めている子があれば進行中。
 function stateOf(it) {
   if (!it.children.length) return it.state;
   const s = it.children.map(stateOf);
-  return s.every((x) => x === "done") ? "done" : s.some((x) => x !== "todo") ? "doing" : "todo";
+  return s.every((x) => x === "done") ? "done" : s.includes("waiting") ? "waiting"
+    : s.some((x) => x !== "todo") ? "doing" : "todo";
 }
 const leaves = (items) => items.flatMap((it) => it.children.length ? leaves(it.children) : [it]);
 
@@ -166,7 +167,8 @@ export default class Timeline extends View {
     const all = leaves(this.plan.items), done = all.filter((x) => x.state === "done").length;
     const pct = all.length ? (done / all.length) * 100 : 0;
     const finished = all.length > 0 && done === all.length;
-    const chip = finished ? ["完了", t.done] : status === "blocked" ? ["あなた待ち", t.blocked] : ["進行中", t.working];
+    const waiting = all.some((x) => x.state === "waiting");
+    const chip = finished ? ["完了", t.done] : status === "blocked" || waiting ? ["あなた待ち", t.blocked] : ["進行中", t.working];
     return v_flex().px(12).py(10).gap(7).rounded(8).bg(t.raised)
       .child(h_flex().gap(8).items_start()
         .child(div().flex_1().min_w(0).whitespace_normal().font_weight(600).child(this.plan.goal || "（目標なし）"))
@@ -183,14 +185,15 @@ export default class Timeline extends View {
 
   rows(t, it, depth) {
     const s = stateOf(it), leaf = !it.children.length;
-    const color = { done: t.done, doing: t.working, todo: t.dim }[s];
+    const color = { done: t.done, doing: t.working, waiting: t.blocked, todo: t.dim }[s];
     const row = h_flex().gap(8).items_start().py(3).pr(6).pl(6 + depth * 18).rounded(5)
-      .when(leaf && s === "doing", (el) => el.bg(t.raised))
+      .when(leaf && (s === "doing" || s === "waiting"), (el) => el.bg(t.raised))
       .child(div().w(12).flex_none().text_size(11).text_color(color).child(ICON[s]))
       .child(div().flex_1().min_w(0).whitespace_normal()
         .text_color(s === "done" ? t.muted : t.foreground)
-        .when(!leaf || s === "doing", (el) => el.font_weight(500))
-        .child(it.title));
+        .when(!leaf || s === "doing" || s === "waiting", (el) => el.font_weight(500))
+        .child(it.title))
+      .when(s === "waiting", (el) => el.child(div().flex_none().text_size(11).text_color(t.blocked).child("返事待ち")));
     return [row, ...it.children.flatMap((c) => this.rows(t, c, depth + 1))];
   }
 }
