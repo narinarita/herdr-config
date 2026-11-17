@@ -122,6 +122,8 @@ source ~/Desktop/herdr-config/shell/e.zsh   # clone した場所に合わせる
 
 入力欄の下に、作る予定のブランチ、起点、置き場所が表示されます。Esc で閉じます。
 
+worktree を作るリポジトリは、選んだ space の最初のターミナルの今のフォルダーで決まります（ターミナルがなければ、space を作ったフォルダー）。そのターミナルで別のリポジトリに `cd` していると、そちらのリポジトリに作ります。
+
 | 入力 | 作られるブランチ |
 | --- | --- |
 | 空のまま Enter | 仮の名前 `wip/<月日>-<時分>`（例 `wip/1112-1835`）。同じ名前があれば `-2`、`-3` を付ける |
@@ -177,8 +179,8 @@ cd herdr-config
 
 | 場所 | 変わること |
 | --- | --- |
-| `~/.config/herdr-app/settings.json` | 今のファイルに、このリポジトリの外観（dark）とフォントなどの値を重ねる。このリポジトリにある項目は上書きし、アプリで変えたほかの項目は残す。前のファイルは `.backup-<日時>/` に残る |
-| `~/.config/herdr-app/keys.json` | 今のファイルに、このリポジトリのキー割り当てを重ねる。同じキーはこのリポジトリの割り当てになり、自分で足したキーは残る。前のファイルは `.backup-<日時>/` に残る |
+| `~/.config/herdr-app/settings.json` | 今のファイルに、このリポジトリの外観（dark）とフォントなどの値を重ねる。このリポジトリにある項目は上書きし、アプリで変えたほかの項目は残す（このリポジトリから消した項目は消えない）。前のファイルは `.backup-<日時>/` に残る |
+| `~/.config/herdr-app/keys.json` | 今のファイルに、このリポジトリのキー割り当てを重ねる。同じキーはこのリポジトリの割り当てになり、自分で足したキーは残る。重ねるだけなので、このリポジトリから消した割り当ては、今のファイルからは消えない（消すときは手で消す）。前のファイルは `.backup-<日時>/` に残る |
 | `~/.claude/hooks/herdr-timeline.sh` | timeline の hook を置く |
 | `~/.claude/hooks/herdr-usage.sh` | サイドバーの使用量を書き出すスクリプトを置く |
 | `~/.claude/settings.json` | Claude Code の hook を 3 つ登録する（`SessionStart`・`UserPromptSubmit`・`Stop`）。どのプロジェクトの Claude にも効くが、Herdr の外（`$HC_TERMINAL_ID` がない）では何もしない。また `statusLine.command` を `~/.claude/hooks/herdr-usage.sh tee \| { 元のコマンド; }` にする（statusline がなければ `herdr-usage.sh` だけ）。書き換える前のファイルは `~/.claude/settings.json.bak-<日時>` に残る |

@@ -44,8 +44,11 @@ data=$(printf '%s' "$input" | jq -c '
 ' 2>/dev/null) || exit 0
 [ -n "$data" ] || exit 0
 
-old=$(cat "$file" 2>/dev/null) || old=null
-data=$(jq -cn --argjson new "$data" --argjson old "$(printf '%s' "$old" | jq -c . 2>/dev/null || echo null)" '
+old=$(cat "$file" 2>/dev/null) || old=""
+# 空や壊れた limits.json は、ないものとして扱う（--argjson に空を渡すと jq が失敗し、二度と書けなくなる）。
+oldjson=$(printf '%s' "$old" | jq -c 'if type == "object" then . else null end' 2>/dev/null)
+[ -n "$oldjson" ] || oldjson=null
+data=$(jq -cn --argjson new "$data" --argjson old "$oldjson" '
   def pick($n; $o):
     if $o == null or ($o | type) != "object" then $n
     elif $n == null then $o

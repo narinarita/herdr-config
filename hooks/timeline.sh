@@ -137,8 +137,13 @@ this_turn() {
 # ロックには持ち主の PID を置き、持ち主のプロセスがもういない（落ちた更新が残した）ときだけ取り除く。
 # 待った時間では外さない（Haiku が遅いと、動いている更新のロックまで外して 2 つが同時に書いてしまうため）。
 # PID を書く前の一瞬は中身が空なので、空のまま 1 分たったものだけを残骸と見なす。
+# ロックの持ち主として、今のプロセス（update が動くサブシェル）の PID を使う。
+# update はサブシェルで動くので $$ は親の PID になり、macOS の /bin/bash 3.2 には $BASHPID がない。
+# そこで $(exec sh -c 'echo $PPID') で取る（コマンド置換のサブシェルを sh に置き換えるので、その親がこのプロセス）。
+# 関数や ( ) に包むとサブシェルが 1 段増えて、すぐ終わるプロセスの PID になるので、必ずこの形で直接書く。
 lock() {
-  local owner
+  local owner me
+  me=$(exec sh -c 'echo $PPID')
   until mkdir "$plan.lock" 2>/dev/null; do
     owner=$(cat "$plan.lock/pid" 2>/dev/null)
     if [ -n "$owner" ]; then
@@ -148,10 +153,10 @@ lock() {
     fi
     sleep 0.2
   done
-  echo "$BASHPID" >"$plan.lock/pid"   # update はサブシェルで動くので $$ ではなく $BASHPID
+  echo "$me" >"$plan.lock/pid"
 }
 unlock() {
-  [ "$(cat "$plan.lock/pid" 2>/dev/null)" = "$BASHPID" ] || return 0
+  [ "$(cat "$plan.lock/pid" 2>/dev/null)" = "$(exec sh -c 'echo $PPID')" ] || return 0
   rm -f "$plan.lock/pid"; rmdir "$plan.lock" 2>/dev/null
 }
 
