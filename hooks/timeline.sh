@@ -100,7 +100,8 @@ PROMPT_START='あなたは、AI エージェントの作業を作業ツリーと
 
 # Claude Code が自分で入れるメッセージの先頭のタグ。これで始まるものは指示と見なさない。
 # （< で始まる指示すべてを外すと、HTML や貼り付けた文章で始まる本物の指示まで落ちる）
-SYSTEM_TAGS='command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|task-notification|bash-input|bash-stdout|bash-stderr|system-reminder|user-prompt-submit-hook'
+# hc はほかの Claude から hc send で届くメッセージ（ユーザーの指示ではないので、前と同じく数えない）。
+SYSTEM_TAGS='hc|command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|task-notification|bash-input|bash-stdout|bash-stderr|system-reminder|user-prompt-submit-hook'
 
 # 今回のやりとり: transcript の最後の「本物のユーザーの指示」から後ろを、短い行にして返す。
 # スキルの展開 (isMeta)、/compact の要約 (isCompactSummary)、SYSTEM_TAGS のタグで始まるもの、中断の印は指示と見なさない。
@@ -137,6 +138,8 @@ this_turn() {
 # ロックには持ち主の PID を置き、持ち主のプロセスがもういない（落ちた更新が残した）ときだけ取り除く。
 # 待った時間では外さない（Haiku が遅いと、動いている更新のロックまで外して 2 つが同時に書いてしまうため）。
 # PID を書く前の一瞬は中身が空なので、空のまま 1 分たったものだけを残骸と見なす。
+# 更新 1 件は長くても数分（Haiku の打ち切りが 2 分）なので、10 分を超えたロックは、再起動で PID が
+# 別のプロセスに使い回されていても残骸と見なす。
 # ロックの持ち主として、今のプロセス（update が動くサブシェル）の PID を使う。
 # update はサブシェルで動くので $$ は親の PID になり、macOS の /bin/bash 3.2 には $BASHPID がない。
 # そこで $(exec sh -c 'echo $PPID') で取る（コマンド置換のサブシェルを sh に置き換えるので、その親がこのプロセス）。
@@ -146,10 +149,11 @@ lock() {
   me=$(exec sh -c 'echo $PPID')
   until mkdir "$plan.lock" 2>/dev/null; do
     owner=$(cat "$plan.lock/pid" 2>/dev/null)
-    if [ -n "$owner" ]; then
-      kill -0 "$owner" 2>/dev/null || { rm -f "$plan.lock/pid"; rmdir "$plan.lock" 2>/dev/null; }
-    elif [ -n "$(find "$plan.lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-      rmdir "$plan.lock" 2>/dev/null
+    if [ -n "$(find "$plan.lock" -maxdepth 0 -mmin +10 2>/dev/null)" ] ||
+       { [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; } ||
+       { [ -z "$owner" ] && [ -n "$(find "$plan.lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
+      # 空の pid ファイルが残っていても外せるように、先に消す。
+      rm -f "$plan.lock/pid"; rmdir "$plan.lock" 2>/dev/null
     fi
     sleep 0.2
   done

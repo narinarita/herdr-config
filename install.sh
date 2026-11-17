@@ -116,7 +116,8 @@ cp "$src/hooks/usage.sh" "$claude_dir/hooks/herdr-usage.sh"
 chmod +x "$claude_dir/hooks/herdr-usage.sh"
 if $has_jq && ! build_settings; then
   echo "Could not update $settings (it changed while installing?): $(cat "$settings.err")" >&2
-  echo "The mods were installed, but the timeline hooks and the usage statusline were not registered. Run install.sh again." >&2
+  echo "The mods were installed, but $settings was left as it was (hooks and statusline not updated). Run install.sh again." >&2
+  [ -z "$failed" ] || echo "herdr-app check also failed for:$failed (see above)" >&2
   rm -f "$settings.tmp" "$settings.err"
   exit 1
 fi
